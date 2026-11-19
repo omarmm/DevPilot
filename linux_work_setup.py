@@ -274,13 +274,13 @@ class App(tk.Tk):
         if not shutil.which("curl"):
             messagebox.showerror("Missing dependency","curl is required. Install it from the Development Setup tab, then refresh.");return
         agent=record["agent"];action="Install" if not record["executable"] else "Update / reinstall"
-        prompt=(f"{action} {agent['name']} using its official installer?\\n\\n"
-                f"Installer source: {agent['docs']}\\n\\nCommand:\\n{agent['install_command']}\\n\\n"
+        prompt=(f"{action} {agent['name']} using its official installer?\n\n"
+                f"Installer source: {agent['docs']}\n\nCommand:\n{agent['install_command']}\n\n"
                 "The installer runs as your current Linux user (no sudo) and executes the vendor's installer script. Continue?")
         if not messagebox.askyesno("Confirm AI agent installation",prompt):return
         self.agent_busy=True;self._agent_selection_changed()
         self.agent_progress.start(12);self.agent_status_label.config(text=f"Installing / updating {agent['name']}…")
-        self._append_agent_log(f"\\n=== {action}: {agent['name']} ===\\nSource: {agent['docs']}\\n$ {agent['install_command']}\\n")
+        self._append_agent_log(f"\n=== {action}: {agent['name']} ===\nSource: {agent['docs']}\n$ {agent['install_command']}\n")
         threading.Thread(target=self._agent_install_worker,args=(agent,),daemon=True).start()
     def _append_agent_log(self,text):
         self.agent_log.insert("end",text);self.agent_log.see("end")
@@ -295,8 +295,8 @@ class App(tk.Tk):
         self.after(0,self._agent_install_done,agent["id"],code,error)
     def _agent_install_done(self,agent_id,code,error=None):
         self.agent_progress.stop();self.agent_busy=False
-        if error:self._append_agent_log(f"\\nInstaller error: {error}\\n")
-        self._append_agent_log(f"\\nInstaller finished with exit code {code}.\\n")
+        if error:self._append_agent_log(f"\nInstaller error: {error}\n")
+        self._append_agent_log(f"\nInstaller finished with exit code {code}.\n")
         self.refresh_agents()
         if code==0 and not self.agent_rows.get(agent_id,{}).get("executable"):
             self.agent_status_label.config(text="Installer finished, but command is not on DevPilot's PATH. Restart DevPilot or reopen your session, then Refresh.")
@@ -330,7 +330,7 @@ class App(tk.Tk):
             try:
                 subprocess.Popen(builder(terminal),cwd=str(directory),env=env,start_new_session=True)
                 self.agent_status_label.config(text=f"Launched {agent['name']} in {directory}");return
-            except OSError as exc:self._append_agent_log(f"Could not launch {name}: {exc}\\n")
+            except OSError as exc:self._append_agent_log(f"Could not launch {name}: {exc}\n")
         messagebox.showerror("Terminal not found","No supported terminal emulator was found. Install x-terminal-emulator or GNOME Terminal, then try again.")
     def browse_root(self):
         p=filedialog.askdirectory(initialdir=self.rootvar.get())
