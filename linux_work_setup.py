@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """DevPilot — Linux development environment manager (preview)."""
 from __future__ import annotations
-import json, os, shutil, subprocess, threading, uuid
+import json, os, shlex, shutil, subprocess, threading, uuid
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-APP_VERSION="0.1.0-preview"
+APP_VERSION="0.2.0-preview"
 HOME=Path.home()
 APP_DIR=HOME/".config/linux-work-setup"
 CONFIG_FILE=APP_DIR/"config.json"
@@ -24,6 +24,14 @@ GROUPS={
 "Python / FastAPI / AI":["python3","python3-pip","python3-venv","python3-dev","pipx"],
 "Node.js":["nodejs","npm"],"Database clients":["mysql-client","sqlite3","postgresql-client"],
 "Docker":["docker.io","docker-compose-v2"],"Utilities":["htop","tree","jq","openssh-client"]}
+# Official user-level installers for terminal coding agents.
+AI_AGENTS=[
+    {"id":"opencode","name":"OpenCode CLI","command":"opencode","install_command":"curl -fsSL https://opencode.ai/v2/install | bash","docs":"https://opencode.ai/docs/"},
+    {"id":"claude","name":"Claude Code","command":"claude","install_command":"curl -fsSL https://claude.ai/install.sh | bash","docs":"https://code.claude.com/docs/en/getting-started"},
+    {"id":"codex","name":"OpenAI Codex CLI","command":"codex","install_command":"curl -fsSL https://chatgpt.com/codex/install.sh | sh","docs":"https://learn.chatgpt.com/docs/cli"},
+    {"id":"copilot","name":"GitHub Copilot CLI","command":"copilot","install_command":"curl -fsSL https://gh.io/copilot-install | bash","docs":"https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"},
+]
+
 
 def run(args, timeout=20):
     return subprocess.run(args,capture_output=True,text=True,timeout=timeout,check=False)
@@ -97,20 +105,22 @@ class App(tk.Tk):
         super().__init__(); self.title("DevPilot — v"+APP_VERSION)
         self.geometry("1080x740"); self.minsize(900,620)
         self.cfg=Config(); self.backup=Backup(); self.pkgmap={}
-        self._ui(); self.refresh_packages(); self.refresh_workspaces(); self.refresh_profiles()
+        self.agent_rows={}; self.agent_busy=False
+        self._ui(); self.refresh_packages(); self.refresh_workspaces(); self.refresh_profiles(); self.refresh_agents()
     def _ui(self):
         style=ttk.Style(self)
         try:style.theme_use("clam")
         except tk.TclError:pass
         h=ttk.Frame(self,padding=14);h.pack(fill="x")
         ttk.Label(h,text="DevPilot",font=("Sans",17,"bold")).pack(anchor="w")
-        ttk.Label(h,text="Development packages • Multiple Git identities • SSH aliases • Workspace mapping",foreground="#555").pack(anchor="w")
+        ttk.Label(h,text="Development Setup • Project Workspaces • Git identities • AI terminal agents",foreground="#555").pack(anchor="w")
         self.tabs=ttk.Notebook(self);self.tabs.pack(fill="both",expand=True,padx=12,pady=(0,12))
         self.dev=ttk.Frame(self.tabs,padding=10);self.ws=ttk.Frame(self.tabs,padding=10)
-        self.git=ttk.Frame(self.tabs,padding=10);self.back=ttk.Frame(self.tabs,padding=10)
-        for frame,label in [(self.dev,"Development Setup"),(self.ws,"Project Workspaces"),(self.git,"Git Accounts & SSH"),(self.back,"Backup & Recovery")]:
+        self.git=ttk.Frame(self.tabs,padding=10);self.agents=ttk.Frame(self.tabs,padding=10)
+        self.back=ttk.Frame(self.tabs,padding=10)
+        for frame,label in [(self.dev,"Development Setup"),(self.ws,"Project Workspaces"),(self.git,"Git Accounts & SSH"),(self.agents,"AI Agents"),(self.back,"Backup & Recovery")]:
             self.tabs.add(frame,text=label)
-        self._dev_ui();self._ws_ui();self._git_ui();self._backup_ui()
+        self._dev_ui();self._ws_ui();self._git_ui();self._agents_ui();self._backup_ui()
     def _dev_ui(self):
         bar=ttk.Frame(self.dev);bar.pack(fill="x")
         ttk.Label(bar,text="Select package rows or groups. Status is checked against APT.").pack(side="left")
@@ -160,6 +170,28 @@ class App(tk.Tk):
         ttk.Label(self.back,text="Creates timestamped copies before applying managed Git/SSH changes. Private SSH keys are excluded.",wraplength=900).pack(anchor="w")
         ttk.Button(self.back,text="Create backup now",command=self.do_backup).pack(anchor="w",pady=10)
         self.backlog=tk.Text(self.back,height=18);self.backlog.pack(fill="both",expand=True)
+    def _agents_ui(self):
+        ttk.Label(self.agents,text="AI coding agents for your terminal",font=("Sans",13,"bold")).pack(anchor="w")
+        ttk.Label(self.agents,text="Install, update, check, and launch official terminal agents. Installers run as your user; no sudo is used.",wraplength=960,foreground="#555").pack(anchor="w",pady=(3,8))
+        self.agent_tree=ttk.Treeview(self.agents,columns=("status","version","command"),show="tree headings",height=7,selectmode="browse")
+        ttk.Button(self.agents,text="Refresh status",command=self.refresh_agents).pack(anchor="e")
+        for col,title,width in [("#0","Agent",220),("status","Status",150),("version","Version",220),("command","Terminal command",180)]:
+            self.agent_tree.heading(col,text=title);self.agent_tree.column(col,width=width)
+        self.agent_tree.pack(fill="both",expand=True,pady=8)
+        details=ttk.LabelFrame(self.agents,text="Launch directory",padding=8);details.pack(fill="x",pady=(0,8))
+        default_dir=Path(self.cfg.data["settings"].get("workspace_root",str(HOME/"Projects"))).expanduser()
+        if not default_dir.is_dir():default_dir=HOME
+        self.agent_workdir=tk.StringVar(value=str(default_dir))
+        ttk.Entry(details,textvariable=self.agent_workdir).pack(side="left",fill="x",expand=True)
+        ttk.Button(details,text="Browse…",command=self.browse_agent_workdir).pack(side="left",padx=(6,0))
+        ttk.Button(details,text="Use selected workspace",command=self.use_selected_workspace).pack(side="left",padx=(6,0))
+        actions=ttk.Frame(self.agents);actions.pack(fill="x")
+        self.agent_install_btn=ttk.Button(actions,text="Install / Update selected",command=self.install_selected_agent);self.agent_install_btn.pack(side="left")
+        self.agent_launch_btn=ttk.Button(actions,text="Launch in Terminal",command=self.launch_selected_agent);self.agent_launch_btn.pack(side="left",padx=8)
+        self.agent_progress=ttk.Progressbar(self.agents,mode="indeterminate");self.agent_progress.pack(fill="x",pady=(8,3))
+        self.agent_status_label=ttk.Label(self.agents,text="Ready",foreground="#555");self.agent_status_label.pack(anchor="w")
+        self.agent_log=tk.Text(self.agents,height=7,wrap="word");self.agent_log.pack(fill="x",pady=(5,0))
+        self.agent_tree.bind("<<TreeviewSelect>>",self._agent_selection_changed)
     def refresh_packages(self):
         self.pkg.delete(*self.pkg.get_children());self.pkgmap={}
         for group,pkgs in GROUPS.items():
@@ -192,6 +224,114 @@ class App(tk.Tk):
         self.pbar.stop();self.plabel.config(text="APT completed." if code==0 else f"APT failed ({code})")
         if err:self.log.insert("end",str(err))
         self.refresh_packages()
+    def _agent_env(self):
+        env=os.environ.copy()
+        extra=[str(HOME/".local"/"bin"),str(HOME/".opencode"/"bin"),str(HOME/".claude"/"bin")]
+        env["PATH"]=os.pathsep.join(extra+[env.get("PATH","")])
+        return env
+    def refresh_agents(self):
+        if not hasattr(self,"agent_tree"):return
+        self.agent_tree.delete(*self.agent_tree.get_children());self.agent_rows={}
+        env=self._agent_env()
+        for agent in AI_AGENTS:
+            executable=shutil.which(agent["command"],path=env["PATH"])
+            status="Not installed";version="—"
+            if executable:
+                status="Installed";version="Version unavailable"
+                try:
+                    result=subprocess.run([executable,"--version"],capture_output=True,text=True,timeout=8,check=False,env=env)
+                    output=(result.stdout or result.stderr).strip().splitlines()
+                    if result.returncode==0 and output:version=output[0][:100]
+                except (OSError,subprocess.TimeoutExpired):pass
+            self.agent_rows[agent["id"]]={"agent":agent,"executable":executable,"status":status,"version":version}
+            self.agent_tree.insert("","end",iid=agent["id"],text=agent["name"],values=(status,version,agent["command"]))
+        self.agent_status_label.config(text="Agent status refreshed. Select an agent to install, update, or launch.")
+        self._agent_selection_changed()
+    def _selected_agent(self):
+        selected=self.agent_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select an agent","Select an AI agent first.");return None
+        return self.agent_rows.get(selected[0])
+    def _agent_selection_changed(self,event=None):
+        if not hasattr(self,"agent_launch_btn"):return
+        selected=self.agent_tree.selection();record=self.agent_rows.get(selected[0]) if selected else None
+        can_launch=bool(record and record.get("executable") and not self.agent_busy)
+        self.agent_launch_btn.config(state="normal" if can_launch else "disabled")
+        self.agent_install_btn.config(state="disabled" if self.agent_busy else "normal")
+    def browse_agent_workdir(self):
+        current=self.agent_workdir.get().strip() or str(HOME)
+        path=filedialog.askdirectory(title="Choose a project directory",initialdir=current)
+        if path:self.agent_workdir.set(path)
+    def use_selected_workspace(self):
+        selected=self.wst.selection()
+        if not selected:
+            messagebox.showinfo("Select workspace","Open Project Workspaces and select a workspace first.");return
+        workspace=next((w for w in self.cfg.data["workspaces"] if w["id"]==selected[0]),None)
+        if workspace:self.agent_workdir.set(workspace["path"])
+    def install_selected_agent(self):
+        record=self._selected_agent()
+        if not record:return
+        if not shutil.which("curl"):
+            messagebox.showerror("Missing dependency","curl is required. Install it from the Development Setup tab, then refresh.");return
+        agent=record["agent"];action="Install" if not record["executable"] else "Update / reinstall"
+        prompt=(f"{action} {agent['name']} using its official installer?\\n\\n"
+                f"Installer source: {agent['docs']}\\n\\nCommand:\\n{agent['install_command']}\\n\\n"
+                "The installer runs as your current Linux user (no sudo) and executes the vendor's installer script. Continue?")
+        if not messagebox.askyesno("Confirm AI agent installation",prompt):return
+        self.agent_busy=True;self._agent_selection_changed()
+        self.agent_progress.start(12);self.agent_status_label.config(text=f"Installing / updating {agent['name']}…")
+        self._append_agent_log(f"\\n=== {action}: {agent['name']} ===\\nSource: {agent['docs']}\\n$ {agent['install_command']}\\n")
+        threading.Thread(target=self._agent_install_worker,args=(agent,),daemon=True).start()
+    def _append_agent_log(self,text):
+        self.agent_log.insert("end",text);self.agent_log.see("end")
+    def _agent_install_worker(self,agent):
+        code=1;error=None
+        try:
+            process=subprocess.Popen(["bash","-lc",agent["install_command"]],cwd=str(HOME),env=self._agent_env(),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+            if process.stdout:
+                for line in process.stdout:self.after(0,self._append_agent_log,line)
+            code=process.wait()
+        except Exception as exc:error=str(exc)
+        self.after(0,self._agent_install_done,agent["id"],code,error)
+    def _agent_install_done(self,agent_id,code,error=None):
+        self.agent_progress.stop();self.agent_busy=False
+        if error:self._append_agent_log(f"\\nInstaller error: {error}\\n")
+        self._append_agent_log(f"\\nInstaller finished with exit code {code}.\\n")
+        self.refresh_agents()
+        if code==0 and not self.agent_rows.get(agent_id,{}).get("executable"):
+            self.agent_status_label.config(text="Installer finished, but command is not on DevPilot's PATH. Restart DevPilot or reopen your session, then Refresh.")
+        elif code!=0:self.agent_status_label.config(text=f"Installer failed (exit code {code}). Check the log above.")
+        self._agent_selection_changed()
+    def launch_selected_agent(self):
+        record=self._selected_agent()
+        if not record:return
+        executable=record.get("executable")
+        if not executable:
+            messagebox.showinfo("Agent not installed","Install this agent first, then refresh.");return
+        directory=Path(self.agent_workdir.get().strip()).expanduser()
+        if not directory.is_dir():
+            messagebox.showerror("Invalid project directory","Choose an existing project directory before launching the agent.");return
+        agent=record["agent"]
+        command=(f"cd -- {shlex.quote(str(directory.resolve()))} && {shlex.quote(executable)}; rc=$?; "
+                 "printf '\\n\\nAgent exited with code %s.\\n' \"$rc\"; "
+                 "read -r -n 1 -s -p 'Press any key to close this terminal…'")
+        terminal_specs=[
+            ("x-terminal-emulator",lambda term:[term,"-e","bash","-lc",command]),
+            ("gnome-terminal",lambda term:[term,"--","bash","-lc",command]),
+            ("xfce4-terminal",lambda term:[term,"--command",f"bash -lc {shlex.quote(command)}"]),
+            ("konsole",lambda term:[term,"-e","bash","-lc",command]),
+            ("kitty",lambda term:[term,"bash","-lc",command]),
+            ("alacritty",lambda term:[term,"-e","bash","-lc",command]),
+        ]
+        env=self._agent_env()
+        for name,builder in terminal_specs:
+            terminal=shutil.which(name,path=env["PATH"])
+            if not terminal:continue
+            try:
+                subprocess.Popen(builder(terminal),cwd=str(directory),env=env,start_new_session=True)
+                self.agent_status_label.config(text=f"Launched {agent['name']} in {directory}");return
+            except OSError as exc:self._append_agent_log(f"Could not launch {name}: {exc}\\n")
+        messagebox.showerror("Terminal not found","No supported terminal emulator was found. Install x-terminal-emulator or GNOME Terminal, then try again.")
     def browse_root(self):
         p=filedialog.askdirectory(initialdir=self.rootvar.get())
         if p:self.rootvar.set(p)
