@@ -2,9 +2,9 @@
 
 **Your Linux development environment, under control.**
 
-DevPilot is a lightweight desktop utility for setting up and managing a Linux developer workstation. It brings development package management, project workspaces, multiple Git identities, SSH key profiles, and safe configuration backups into one guided interface.
+DevPilot is a lightweight desktop utility for setting up and managing a Linux developer workstation. It brings development package management, project workspaces, multiple Git identities, SSH key profiles, safe configuration backups, and terminal AI coding agents into one guided interface.
 
-> **Current status:** Early development / preview (`0.1.0-preview`). Features and configuration behavior may change.
+> **Current status:** Early development / preview (`0.2.0-preview`). Features and configuration behavior may change.
 
 ## Features
 
@@ -26,6 +26,30 @@ DevPilot is a lightweight desktop utility for setting up and managing a Linux de
 - Creates distinct SSH host aliases for different accounts.
 - Applies Git conditional includes so repositories under a workspace can inherit its assigned commit identity.
 
+### AI Agents
+The **AI Agents** tab manages four terminal coding agents:
+
+| Agent | Command | What DevPilot provides |
+|---|---|---|
+| OpenCode CLI | `opencode` | Install/update, detect version, launch in a project folder |
+| Claude Code | `claude` | Install/update, detect version, launch in a project folder |
+| OpenAI Codex CLI | `codex` | Install/update, detect version, launch in a project folder |
+| GitHub Copilot CLI | `copilot` | Install/update, detect version, launch in a project folder |
+
+- Uses each vendor's official Linux installer command.
+- Shows the installer source and exact command and asks for confirmation before running it.
+- Runs the installer as the current user; DevPilot does not use `sudo` for AI-agent installation.
+- Lets you choose a launch directory or use a registered workspace.
+- Opens the selected agent in a new terminal window and displays installer output in the app.
+
+**Important:** The install action downloads and executes the installer script published by the selected vendor. Review the displayed source and command before confirming. Installing a CLI does not include a subscription, API credits, or provider authentication. Sign in from the agent's terminal after installation. GitHub Copilot CLI requires an eligible Copilot subscription.
+
+Official agent documentation:
+- [OpenCode](https://opencode.ai/docs/)
+- [Claude Code](https://code.claude.com/docs/en/getting-started)
+- [OpenAI Codex CLI](https://learn.chatgpt.com/docs/cli)
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli)
+
 ### Backup & Recovery
 - Creates timestamped backups before applying managed Git and SSH configuration.
 - Preserves unmanaged content in Git and SSH configuration files.
@@ -39,12 +63,14 @@ DevPilot is a lightweight desktop utility for setting up and managing a Linux de
 - Tkinter.
 - APT and `pkexec` for package installation.
 - Git and OpenSSH client for Git/SSH features.
+- `curl` for AI-agent installers.
+- A supported terminal emulator (such as the system's `x-terminal-emulator`, GNOME Terminal, Xfce Terminal, Konsole, Kitty, or Alacritty) to launch agents.
 
 Install system dependencies on Linux Mint / Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-tk policykit-1 git openssh-client
+sudo apt install -y python3 python3-tk policykit-1 git openssh-client curl
 ```
 
 ## Quick start
@@ -105,7 +131,8 @@ Private SSH keys are not included in DevPilot backups. Keep your own secure back
 - Workspace move and rename workflows are not included.
 - A graphical diagnostics and configuration-conflict review screen is still planned.
 - Package availability depends on the configured APT repositories and Linux distribution.
-- Automated behavioral tests are not yet included; CI currently checks Python syntax.
+- GUI flows that run external installers require an interactive desktop session.
+- Automated installer integration tests are not included yet; CI checks syntax and the static agent catalog.
 
 ## Roadmap
 
@@ -116,11 +143,12 @@ Private SSH keys are not included in DevPilot backups. Keep your own secure back
 - [x] SSH key generation and host aliases
 - [x] Git conditional includes
 - [x] Timestamped backups before managed configuration changes
+- [x] AI Agents tab for install/update, status detection, and terminal launch
 - [ ] Secure per-account HTTPS credential integration
 - [ ] Bash and Zsh workspace prompt integration
 - [ ] Workspace move/rename with collision preview
 - [ ] Diagnostics and configuration repair workflow
-- [ ] Automated behavioral test suite
+- [ ] Automated UI and installer integration test suite
 - [ ] Packaged release for easier installation
 
 ## Project structure
@@ -132,6 +160,8 @@ DevPilot/
 │       └── ci.yml
 ├── docs/
 │   └── images/
+├── tests/
+│   └── test_ai_agent_catalog.py
 ├── linux_work_setup.py
 ├── README.md
 ├── CHANGELOG.md
