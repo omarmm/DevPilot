@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   syntax-and-tests:
-    name: Python syntax and agent catalog tests
+    name: Python syntax and application tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
