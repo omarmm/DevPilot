@@ -13,6 +13,25 @@ DevPilot is a lightweight desktop utility for setting up and managing a Linux de
 - Detects whether packages are installed, missing, or have updates available.
 - Installs missing packages or updates selected packages through APT and `pkexec`.
 
+### Database Servers
+The dedicated **Database Servers** tab manages common local server packages and their system services:
+
+| Server | APT package | Default service | Default port |
+|---|---|---|---:|
+| MySQL | `mysql-server` | `mysql` | 3306 |
+| MariaDB | `mariadb-server` | `mariadb` | 3306 |
+| PostgreSQL | `postgresql` | `postgresql` | 5432 |
+| Redis | `redis-server` | `redis-server` | 6379 |
+
+- Detects package installation state, installed/candidate version, service activity, and whether the service is enabled at boot.
+- Installs or upgrades the selected APT server package after confirmation.
+- Starts, stops, restarts, enables, or disables APT/systemd-managed services after confirmation.
+- Detects manually launched database processes that do not have an APT/systemd service entry, and displays their PID, port, data directory, and socket when available.
+- Treats unmanaged processes as read-only. DevPilot does not stop, restart, import, move, or delete their data.
+- Checks for known default-port conflicts before installing or starting another server. MySQL and MariaDB are treated as conflicting default-port alternatives.
+
+**Important:** Installing a system database server is different from installing a database client. The **Development Setup** tab still provides client tools for connecting to servers. Installing a server may create a system-managed data directory and start a service; back up existing databases before changing server packages or migrating data. A manually launched server using a temporary data directory remains temporary until you deliberately migrate it to a persistent setup.
+
 ### Project Workspaces
 - Uses a configurable workspace root (default: `~/Projects`).
 - Creates new workspace directories or registers existing directories.
