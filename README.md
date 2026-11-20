@@ -4,7 +4,7 @@
 
 DevPilot is a lightweight desktop utility for setting up and managing a Linux developer workstation. It brings development package management, project workspaces, multiple Git identities, SSH key profiles, safe configuration backups, and terminal AI coding agents into one guided interface.
 
-> **Current status:** Early development / preview (`0.2.0-preview`). Features and configuration behavior may change.
+> **Current status:** Early development / preview (`0.3.0-preview`). Features and configuration behavior may change.
 
 ## Features
 
@@ -163,6 +163,7 @@ Private SSH keys are not included in DevPilot backups. Keep your own secure back
 - [x] Git conditional includes
 - [x] Timestamped backups before managed configuration changes
 - [x] AI Agents tab for install/update, status detection, and terminal launch
+- [x] Database Servers tab for APT installation, systemd lifecycle, and unmanaged process detection
 - [ ] Secure per-account HTTPS credential integration
 - [ ] Bash and Zsh workspace prompt integration
 - [ ] Workspace move/rename with collision preview
@@ -180,7 +181,8 @@ DevPilot/
 ├── docs/
 │   └── images/
 ├── tests/
-│   └── test_ai_agent_catalog.py
+│   ├── test_ai_agent_catalog.py
+│   └── test_database_servers.py
 ├── linux_work_setup.py
 ├── README.md
 ├── CHANGELOG.md
