@@ -221,9 +221,9 @@ class App(tk.Tk):
             show="tree headings",height=8,selectmode="browse"
         )
         for col,title,width in [
-            ("#0","Database server",210),("package","APT package",150),
-            ("unit","Systemd unit",130),("status","Service state",145),
-            ("version","Installed / candidate version",190),("details","Details",270)
+            ("#0","Database server",165),("package","APT package",125),
+            ("unit","Systemd unit",110),("status","Service state",115),
+            ("version","Installed / candidate version",165),("details","Details",245)
         ]:
             self.db_tree.heading(col,text=title)
             self.db_tree.column(col,width=width,anchor="w")
