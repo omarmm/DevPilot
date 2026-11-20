@@ -2,6 +2,22 @@
 
 All notable DevPilot preview releases are documented here.
 
+## [0.3.0-preview] - 2026-11-20
+
+### Added
+- Dedicated **Database Servers** tab for MySQL, MariaDB, PostgreSQL, and Redis.
+- APT package installation and upgrade actions for database servers.
+- Systemd service status, start, stop, restart, enable-at-boot, and disable-at-boot controls.
+- Detection of manually launched database server processes, including PID, port, data directory, and socket when available.
+- Default-port and MySQL/MariaDB conflict checks before installation or service start.
+- Automated tests for server catalog conflicts and unmanaged process detection.
+
+### Safety
+- Unmanaged database processes are displayed read-only; DevPilot does not stop or alter them.
+- Package/service actions require explicit confirmation and privileged authorization.
+- Existing client tools remain separate from server packages.
+
+
 ## [0.2.0-preview] - 2026-11-20
 
 ### Added
