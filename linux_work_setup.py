@@ -7,7 +7,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-APP_VERSION="0.2.0-preview"
+APP_VERSION="0.3.0-preview"
 HOME=Path.home()
 APP_DIR=HOME/".config/linux-work-setup"
 CONFIG_FILE=APP_DIR/"config.json"
@@ -24,6 +24,14 @@ GROUPS={
 "Python / FastAPI / AI":["python3","python3-pip","python3-venv","python3-dev","pipx"],
 "Node.js":["nodejs","npm"],"Database clients":["mysql-client","sqlite3","postgresql-client"],
 "Docker":["docker.io","docker-compose-v2"],"Utilities":["htop","tree","jq","openssh-client"]}
+
+DATABASE_SERVERS=[
+    {"id":"mysql","name":"MySQL Server","package":"mysql-server","service":"mysql","port":3306,"conflicts":["mariadb"]},
+    {"id":"mariadb","name":"MariaDB Server","package":"mariadb-server","service":"mariadb","port":3306,"conflicts":["mysql"]},
+    {"id":"postgresql","name":"PostgreSQL Server","package":"postgresql","service":"postgresql","port":5432,"conflicts":[]},
+    {"id":"redis","name":"Redis Server","package":"redis-server","service":"redis-server","port":6379,"conflicts":[]},
+]
+
 # Official user-level installers for terminal coding agents.
 AI_AGENTS=[
     {"id":"opencode","name":"OpenCode CLI","command":"opencode","install_command":"curl -fsSL https://opencode.ai/v2/install | bash","docs":"https://opencode.ai/docs/"},
@@ -100,27 +108,91 @@ def installed_state(pkg):
             k,v=line.strip().split(":",1); vals[k]=v.strip()
     return "Update available" if vals.get("Installed") and vals.get("Candidate") not in (None,"(none)",vals.get("Installed")) else "Installed"
 
+def database_package_version(pkg):
+    result=run(["dpkg-query","-W","-f=${Version}",pkg],8)
+    if result.returncode==0 and result.stdout.strip():return result.stdout.strip()
+    policy=run(["apt-cache","policy",pkg],8).stdout
+    for line in policy.splitlines():
+        if line.strip().startswith("Candidate:"):
+            candidate=line.split(":",1)[1].strip()
+            return candidate if candidate!="(none)" else "—"
+    return "—"
+
+def database_service_state(service):
+    if not shutil.which("systemctl"):
+        return {"unit_available":False,"active":"systemd unavailable","enabled":"—"}
+    loaded=run(["systemctl","show",service,"--property=LoadState","--value"],8)
+    if loaded.returncode or loaded.stdout.strip()!="loaded":
+        return {"unit_available":False,"active":"unit not found","enabled":"—"}
+    active=run(["systemctl","is-active",service],8)
+    enabled=run(["systemctl","is-enabled",service],8)
+    return {
+        "unit_available":True,
+        "active":active.stdout.strip() or "unknown",
+        "enabled":enabled.stdout.strip() or "unknown",
+    }
+
+def parse_unmanaged_database_processes(ps_output):
+    """Identify server processes not represented by DevPilot's APT/systemd records."""
+    known={
+        "mysqld":("MySQL-compatible server",3306),
+        "mariadbd":("MariaDB server",3306),
+        "postgres":("PostgreSQL server",5432),
+        "redis-server":("Redis server",6379),
+    }
+    ignored={"bash","sh","dash","zsh","fish","grep","tail","ps","sudo","pkexec"}
+    found=[]
+    for line in ps_output.splitlines():
+        fields=line.strip().split(None,1)
+        if len(fields)!=2 or not fields[0].isdigit():continue
+        pid,args=fields
+        try:tokens=shlex.split(args)
+        except ValueError:continue
+        if not tokens:continue
+        first_name=Path(tokens[0]).name.lower()
+        if first_name in ignored:continue
+        binary=next((token for token in tokens if Path(token).name in known),None)
+        if not binary:continue
+        if binary!=tokens[0] and not first_name.startswith(("ld-linux","ld-")):continue
+        name,default_port=known[Path(binary).name]
+        def option_value(option):
+            prefix=option+"="
+            for index,token in enumerate(tokens):
+                if token.startswith(prefix):return token[len(prefix):]
+                if token==option and index+1<len(tokens):return tokens[index+1]
+            return ""
+        raw_port=option_value("--port")
+        try:port=int(raw_port) if raw_port else default_port
+        except ValueError:port=default_port
+        found.append({
+            "pid":pid,"name":name,"binary":binary,"port":port,
+            "datadir":option_value("--datadir"),
+            "socket":option_value("--socket"),
+        })
+    return found
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__(); self.title("DevPilot — v"+APP_VERSION)
         self.geometry("1080x740"); self.minsize(900,620)
         self.cfg=Config(); self.backup=Backup(); self.pkgmap={}
         self.agent_rows={}; self.agent_busy=False
-        self._ui(); self.refresh_packages(); self.refresh_workspaces(); self.refresh_profiles(); self.refresh_agents()
+        self.db_rows={}; self.db_busy=False
+        self._ui(); self.refresh_packages(); self.refresh_database_servers(); self.refresh_workspaces(); self.refresh_profiles(); self.refresh_agents()
     def _ui(self):
         style=ttk.Style(self)
         try:style.theme_use("clam")
         except tk.TclError:pass
         h=ttk.Frame(self,padding=14);h.pack(fill="x")
         ttk.Label(h,text="DevPilot",font=("Sans",17,"bold")).pack(anchor="w")
-        ttk.Label(h,text="Development Setup • Project Workspaces • Git identities • AI terminal agents",foreground="#555").pack(anchor="w")
+        ttk.Label(h,text="Development Setup • Database servers • Project Workspaces • Git identities • AI agents",foreground="#555").pack(anchor="w")
         self.tabs=ttk.Notebook(self);self.tabs.pack(fill="both",expand=True,padx=12,pady=(0,12))
-        self.dev=ttk.Frame(self.tabs,padding=10);self.ws=ttk.Frame(self.tabs,padding=10)
+        self.dev=ttk.Frame(self.tabs,padding=10);self.db=ttk.Frame(self.tabs,padding=10);self.ws=ttk.Frame(self.tabs,padding=10)
         self.git=ttk.Frame(self.tabs,padding=10);self.agents=ttk.Frame(self.tabs,padding=10)
         self.back=ttk.Frame(self.tabs,padding=10)
-        for frame,label in [(self.dev,"Development Setup"),(self.ws,"Project Workspaces"),(self.git,"Git Accounts & SSH"),(self.agents,"AI Agents"),(self.back,"Backup & Recovery")]:
+        for frame,label in [(self.dev,"Development Setup"),(self.db,"Database Servers"),(self.ws,"Project Workspaces"),(self.git,"Git Accounts & SSH"),(self.agents,"AI Agents"),(self.back,"Backup & Recovery")]:
             self.tabs.add(frame,text=label)
-        self._dev_ui();self._ws_ui();self._git_ui();self._agents_ui();self._backup_ui()
+        self._dev_ui();self._db_ui();self._ws_ui();self._git_ui();self._agents_ui();self._backup_ui()
     def _dev_ui(self):
         bar=ttk.Frame(self.dev);bar.pack(fill="x")
         ttk.Label(bar,text="Select package rows or groups. Status is checked against APT.").pack(side="left")
@@ -135,6 +207,50 @@ class App(tk.Tk):
         self.pbar=ttk.Progressbar(self.dev,mode="indeterminate");self.pbar.pack(fill="x",pady=8)
         self.plabel=ttk.Label(self.dev,text="Ready");self.plabel.pack(anchor="w")
         self.log=tk.Text(self.dev,height=6);self.log.pack(fill="x",pady=5)
+    def _db_ui(self):
+        ttk.Label(self.db,text="Database server installation and service management",font=("Sans",13,"bold")).pack(anchor="w")
+        ttk.Label(
+            self.db,
+            text="Manage APT-installed MySQL, MariaDB, PostgreSQL, and Redis services. Manually launched servers are detected separately and are never stopped or modified here.",
+            wraplength=960,foreground="#555"
+        ).pack(anchor="w",pady=(3,8))
+        top=ttk.Frame(self.db);top.pack(fill="x")
+        ttk.Button(top,text="Refresh status",command=self.refresh_database_servers).pack(side="right")
+        self.db_tree=ttk.Treeview(
+            self.db,columns=("package","unit","status","version","details"),
+            show="tree headings",height=8,selectmode="browse"
+        )
+        for col,title,width in [
+            ("#0","Database server",210),("package","APT package",150),
+            ("unit","Systemd unit",130),("status","Service state",145),
+            ("version","Installed / candidate version",190),("details","Details",270)
+        ]:
+            self.db_tree.heading(col,text=title)
+            self.db_tree.column(col,width=width,anchor="w")
+        self.db_tree.pack(fill="both",expand=True,pady=8)
+        actions=ttk.Frame(self.db);actions.pack(fill="x")
+        self.db_install_btn=ttk.Button(actions,text="Install / Update selected",command=self.install_selected_database_server)
+        self.db_install_btn.pack(side="left")
+        self.db_start_btn=ttk.Button(actions,text="Start",command=lambda:self.database_service_action("start"))
+        self.db_start_btn.pack(side="left",padx=(7,0))
+        self.db_stop_btn=ttk.Button(actions,text="Stop",command=lambda:self.database_service_action("stop"))
+        self.db_stop_btn.pack(side="left",padx=(7,0))
+        self.db_restart_btn=ttk.Button(actions,text="Restart",command=lambda:self.database_service_action("restart"))
+        self.db_restart_btn.pack(side="left",padx=(7,0))
+        self.db_enable_btn=ttk.Button(actions,text="Enable at boot",command=lambda:self.database_service_action("enable"))
+        self.db_enable_btn.pack(side="left",padx=(7,0))
+        self.db_disable_btn=ttk.Button(actions,text="Disable at boot",command=lambda:self.database_service_action("disable"))
+        self.db_disable_btn.pack(side="left",padx=(7,0))
+        self.db_service_buttons=[self.db_start_btn,self.db_stop_btn,self.db_restart_btn,self.db_enable_btn,self.db_disable_btn]
+        self.db_progress=ttk.Progressbar(self.db,mode="indeterminate")
+        self.db_progress.pack(fill="x",pady=(8,3))
+        self.db_status_label=ttk.Label(self.db,text="Ready",foreground="#555")
+        self.db_status_label.pack(anchor="w")
+        self.db_log=tk.Text(self.db,height=5,wrap="word")
+        self.db_log.pack(fill="x",pady=(5,0))
+        self.db_tree.bind("<<TreeviewSelect>>",self._db_selection_changed)
+        self._db_selection_changed()
+
     def _ws_ui(self):
         r=ttk.Frame(self.ws);r.pack(fill="x")
         ttk.Label(r,text="Workspace root").pack(side="left")
@@ -224,6 +340,185 @@ class App(tk.Tk):
         self.pbar.stop();self.plabel.config(text="APT completed." if code==0 else f"APT failed ({code})")
         if err:self.log.insert("end",str(err))
         self.refresh_packages()
+        self.refresh_database_servers()
+
+    def refresh_database_servers(self):
+        if not hasattr(self,"db_tree"):return
+        self.db_tree.delete(*self.db_tree.get_children())
+        self.db_rows={}
+        managed_active_ports=set()
+        for server in DATABASE_SERVERS:
+            package_state=installed_state(server["package"])
+            service=database_service_state(server["service"]) if package_state!="Not installed" else {
+                "unit_available":False,"active":"not installed","enabled":"—"
+            }
+            if service["unit_available"] and service["active"]=="active":
+                managed_active_ports.add(server["port"])
+            version=database_package_version(server["package"])
+            details=f"APT: {package_state} · Auto-start: {service['enabled']}"
+            self.db_rows[server["id"]]={
+                "managed":True,"server":server,"package_state":package_state,
+                "unit_available":service["unit_available"],"active":service["active"],
+                "enabled":service["enabled"],
+            }
+            self.db_tree.insert(
+                "","end",iid=server["id"],text=server["name"],
+                values=(server["package"],server["service"],service["active"],version,details)
+            )
+        ps=run(["ps","-eo","pid=,args="],8)
+        if ps.returncode==0:
+            for process in parse_unmanaged_database_processes(ps.stdout):
+                if process["port"] in managed_active_ports:continue
+                details=[f"PID {process['pid']}",f"Port {process['port']}"]
+                if process["datadir"]:details.append(f"Data: {process['datadir']}")
+                if process["socket"]:details.append(f"Socket: {process['socket']}")
+                iid="external-"+process["pid"]
+                self.db_rows[iid]={"managed":False,"process":process}
+                self.db_tree.insert(
+                    "","end",iid=iid,text=process["name"]+" (unmanaged)",
+                    values=("External binary","No systemd unit","Running (manual)","—"," · ".join(details))
+                )
+        self.db_status_label.config(text="Database server status refreshed. Unmanaged processes are read-only here.")
+        self._db_selection_changed()
+
+    def _db_selection_changed(self,event=None):
+        if not hasattr(self,"db_install_btn"):return
+        selected=self.db_tree.selection()
+        record=self.db_rows.get(selected[0]) if selected else None
+        available=bool(record and record.get("managed") and not self.db_busy)
+        can_manage=bool(
+            available and record.get("package_state")!="Not installed"
+            and record.get("unit_available")
+        )
+        self.db_install_btn.config(state="normal" if available else "disabled")
+        for button in self.db_service_buttons:
+            button.config(state="normal" if can_manage else "disabled")
+
+    def _selected_database_server(self):
+        selected=self.db_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select a database server","Select a database server first.")
+            return None
+        record=self.db_rows.get(selected[0])
+        if not record or not record.get("managed"):
+            messagebox.showinfo(
+                "Unmanaged database process",
+                "This server was started outside APT/systemd. DevPilot will not stop, restart, or modify it. Manage it from the tool or script that launched it."
+            )
+            return None
+        return record
+
+    def _database_log(self,message):
+        self.db_log.insert("end",message)
+        self.db_log.see("end")
+
+    def _start_database_task(self,command,label):
+        if self.db_busy:return
+        if not shutil.which("pkexec"):
+            messagebox.showerror("Missing dependency","pkexec is required for privileged database server operations.")
+            return
+        self.db_busy=True
+        self._db_selection_changed()
+        self.db_progress.start(12)
+        self.db_status_label.config(text=label+"…")
+        self._database_log(f"\n$ {' '.join(shlex.quote(part) for part in command)}\n")
+        threading.Thread(
+            target=self._database_task_worker,args=(command,label),daemon=True
+        ).start()
+
+    def _database_task_worker(self,command,label):
+        code=1;error=None
+        try:
+            process=subprocess.Popen(
+                command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                text=True,bufsize=1
+            )
+            if process.stdout:
+                for line in process.stdout:self.after(0,self._database_log,line)
+            code=process.wait()
+        except Exception as exc:error=str(exc)
+        self.after(0,self._database_task_done,label,code,error)
+
+    def _database_task_done(self,label,code,error=None):
+        self.db_progress.stop()
+        self.db_busy=False
+        if error:self._database_log(f"\nError: {error}\n")
+        self._database_log(f"\n{label} finished with exit code {code}.\n")
+        self.refresh_packages()
+        self.refresh_database_servers()
+        self.db_status_label.config(
+            text=f"{label} completed." if code==0 else f"{label} failed (exit code {code}). Check the log."
+        )
+        self._db_selection_changed()
+
+    def _external_processes_on_port(self,port):
+        return [
+            row["process"] for row in self.db_rows.values()
+            if not row.get("managed") and row.get("process",{}).get("port")==port
+        ]
+
+    def install_selected_database_server(self):
+        record=self._selected_database_server()
+        if not record or self.db_busy:return
+        server=record["server"]
+        for conflict_id in server.get("conflicts",[]):
+            conflict=self.db_rows.get(conflict_id)
+            if conflict and conflict.get("package_state")!="Not installed":
+                messagebox.showerror(
+                    "Conflicting database servers",
+                    f"{server['name']} and {conflict['server']['name']} cannot be installed together using their default APT configuration. Remove the other server only after backing up its databases."
+                )
+                return
+        external=self._external_processes_on_port(server["port"])
+        if external:
+            process=external[0]
+            messagebox.showwarning(
+                "Database port already in use",
+                f"An unmanaged database process is already using port {server['port']} (PID {process['pid']}).\n\n"
+                f"Data directory: {process['datadir'] or 'not reported'}\n\n"
+                "DevPilot will not install another server on that port. Inspect and safely stop or migrate the existing instance first."
+            )
+            return
+        action="Install" if record["package_state"]=="Not installed" else "Update"
+        if action=="Install":
+            command=["pkexec","apt-get","install","-y",server["package"]]
+        else:
+            command=["pkexec","apt-get","install","--only-upgrade","-y",server["package"]]
+        prompt=(
+            f"{action} {server['name']} using APT package {server['package']}?\n\n"
+            f"APT will use the candidate version from your configured repositories.\n"
+            "The package may create a system data directory and start/enable its systemd service. "
+            "DevPilot will not import or overwrite an unmanaged data directory.\n\nContinue?"
+        )
+        if not messagebox.askyesno(f"Confirm database server {action.lower()}",prompt):return
+        self._start_database_task(command,f"{action} {server['name']}")
+
+    def database_service_action(self,action):
+        record=self._selected_database_server()
+        if not record or self.db_busy:return
+        if record["package_state"]=="Not installed" or not record["unit_available"]:
+            messagebox.showinfo("Service unavailable","Install the APT server package and ensure its systemd unit exists first.")
+            return
+        server=record["server"]
+        if action in ("start","restart"):
+            external=self._external_processes_on_port(server["port"])
+            if external:
+                process=external[0]
+                messagebox.showwarning(
+                    "Database port already in use",
+                    f"An unmanaged process is using port {server['port']} (PID {process['pid']}). Stop or reconfigure it before starting this systemd service."
+                )
+                return
+        titles={"start":"Start","stop":"Stop","restart":"Restart","enable":"Enable at boot","disable":"Disable at boot"}
+        if action not in titles:return
+        command=["pkexec","systemctl",action,server["service"]]
+        if not messagebox.askyesno(
+            "Confirm database service action",
+            f"{titles[action]} {server['name']}?\n\nCommand: systemctl {action} {server['service']}\n\n"
+            "This action applies only to the APT/systemd-managed service, not manually launched processes."
+        ):return
+        self._start_database_task(command,f"{titles[action]} {server['name']}")
+
     def _agent_env(self):
         env=os.environ.copy()
         extra=[str(HOME/".local"/"bin"),str(HOME/".opencode"/"bin"),str(HOME/".claude"/"bin")]
