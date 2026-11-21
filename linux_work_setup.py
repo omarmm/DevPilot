@@ -180,6 +180,34 @@ def parse_unmanaged_database_processes(ps_output):
         })
     return found
 
+def github_cli_auth_status(profile):
+    """Return (label, detail) for the selected GitHub account without exposing credentials."""
+    if not shutil.which("gh"):
+        return "CLI missing", "GitHub CLI is not installed"
+    host=(profile.get("host") or "github.com").strip()
+    username=(profile.get("username") or "").strip()
+    try:
+        result=subprocess.run(
+            ["gh","auth","status","--hostname",host],
+            capture_output=True,text=True,timeout=10,check=False
+        )
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        return "Unknown", str(exc)
+    output=(result.stdout or "")+"\n"+(result.stderr or "")
+    # gh reports one or more accounts; identify this profile's exact account.
+    account_pattern=rf"Logged in to {re.escape(host)} account {re.escape(username)}(?:\s|$)"
+    match=re.search(account_pattern,output,re.IGNORECASE)
+    if match:
+        tail=output[match.end():].splitlines()
+        active=any("Active account: true" in line for line in tail[:3])
+        if active:
+            return "Authenticated", f"GitHub account: {username} (active)"
+        return "Authenticated (inactive)", f"GitHub account: {username} is saved but not active"
+    if result.returncode==0:
+        return "Not authenticated", f"No saved GitHub CLI login for {username} on {host}"
+    return "Not authenticated", f"GitHub CLI has no usable login for {username} on {host}"
+
+
 def install_desktop_shortcuts():
     """Install a menu launcher and a directly double-clickable Desktop shortcut."""
     script=Path(__file__).resolve()
@@ -203,7 +231,6 @@ def install_desktop_shortcuts():
         "Comment=Linux development environment manager\n"
         f'Exec=/usr/bin/python3 "{escaped_script}"\n'
         f'TryExec=/usr/bin/python3\n'
-        f'Path="{escaped_workdir}"\n'
         f"Icon={icon_value}\n"
         "Terminal=false\n"
         "Categories=Development;Utility;\n"
@@ -367,8 +394,8 @@ class App(tk.Tk):
         ttk.Label(self.ws,text="A profile assigned to a workspace applies to repositories under that directory through Git conditional includes. Repository-local Git settings remain untouched.",wraplength=900,foreground="#555").pack(anchor="w",pady=10)
     def _git_ui(self):
         ttk.Label(self.git,text="Git profiles",font=("Sans",13,"bold")).pack(anchor="w")
-        self.gitt=ttk.Treeview(self.git,columns=("name","email","auth","alias"),show="headings",height=9)
-        for c,t,w in [("name","Profile / Git name",220),("email","Commit email",260),("auth","Authentication",130),("alias","SSH host alias",220)]:
+        self.gitt=ttk.Treeview(self.git,columns=("name","email","auth","alias","status"),show="headings",height=9)
+        for c,t,w in [("name","Profile / Git name",180),("email","Commit email",220),("auth","Method",85),("alias","SSH host alias",170),("status","GitHub status",220)]:
             self.gitt.heading(c,text=t);self.gitt.column(c,width=w)
         self.gitt.pack(fill="both",expand=True,pady=8)
         row=ttk.Frame(self.git);row.pack(fill="x")
@@ -379,6 +406,7 @@ class App(tk.Tk):
         ttk.Button(row,text="Apply Git / SSH configuration",command=self.apply_git).pack(side="left")
         ttk.Button(row,text="Apply to project folder…",command=self.apply_git_to_folder).pack(side="left",padx=(6,0))
         ttk.Button(row,text="Set up HTTPS authentication",command=self.setup_https_authentication).pack(side="left",padx=(6,0))
+        ttk.Button(row,text="Refresh auth status",command=self.refresh_profiles).pack(side="left",padx=(6,0))
         ttk.Label(self.git,text="SSH: each account gets a distinct key and Host alias. HTTPS: select an HTTPS profile and use Set up HTTPS authentication to sign in with GitHub CLI; DevPilot never asks for or stores your password or token.",wraplength=930,foreground="#555").pack(anchor="w",pady=10)
         self.gitstatus=ttk.Label(self.git,text="No changes applied yet.",foreground="#555");self.gitstatus.pack(anchor="w")
     def setup_https_authentication(self):
@@ -404,16 +432,55 @@ class App(tk.Tk):
             return
         if not shutil.which("gh"):
             if not messagebox.askyesno("GitHub CLI required",
-                "GitHub CLI (gh) is not installed. Install it using the system package manager now?"):
+                "GitHub CLI (gh) is not installed. DevPilot will install it using APT. "
+                "A progress window will remain visible while the system authorization prompt is handled."):
                 return
+            self._install_gh_async(profile)
+            return
+        self._launch_gh_login(profile)
+
+    def _install_gh_async(self, profile):
+        progress=tk.Toplevel(self)
+        progress.title("Installing GitHub CLI")
+        progress.transient(self)
+        progress.resizable(False,False)
+        ttk.Label(progress,text="Installing GitHub CLI (gh)…",font=("Sans",11,"bold")).pack(padx=18,pady=(16,6))
+        ttk.Label(progress,text="Please approve the system authentication prompt if it appears.\nThis may take a few minutes.",justify="center").pack(padx=18,pady=4)
+        bar=ttk.Progressbar(progress,mode="indeterminate",length=340)
+        bar.pack(padx=18,pady=12)
+        bar.start(12)
+        status=tk.StringVar(value="Waiting for APT / administrator approval…")
+        ttk.Label(progress,textvariable=status).pack(padx=18,pady=(0,14))
+        progress.protocol("WM_DELETE_WINDOW",lambda:status.set("Installation continues in the background…"))
+        def worker():
             try:
-                result=subprocess.run(["pkexec","apt-get","install","-y","gh"],check=False)
-                if result.returncode!=0:
-                    messagebox.showerror("Installation failed","GitHub CLI could not be installed. Check the system package manager and try again.")
-                    return
+                result=subprocess.run(["pkexec","apt-get","install","-y","gh"],capture_output=True,text=True,check=False)
+                code=result.returncode
+                output=(result.stdout or "")+"\n"+(result.stderr or "")
             except OSError as exc:
-                messagebox.showerror("Installation failed",str(exc))
-                return
+                code=127;output=str(exc)
+            self.after(0,lambda:self._finish_gh_install(progress,bar,status,profile,code,output))
+        threading.Thread(target=worker,daemon=True).start()
+
+    def _finish_gh_install(self, progress, bar, status, profile, code, output):
+        try:
+            bar.stop()
+            progress.destroy()
+        except tk.TclError:
+            pass
+        if code==0 and shutil.which("gh"):
+            self.gitstatus.config(text="GitHub CLI installed successfully. Starting secure browser sign-in…")
+            self._launch_gh_login(profile)
+        else:
+            detail=output.strip()[-2500:] or "APT installation failed or was cancelled."
+            messagebox.showerror("GitHub CLI installation failed",detail)
+            self.gitstatus.config(text="GitHub CLI installation failed. See the error details.")
+
+    def _launch_gh_login(self, profile):
+        host=profile.get("host","github.com").strip()
+        if not profile.get("username","").strip():
+            messagebox.showerror("Missing GitHub username","Edit this Git profile and enter its GitHub username first.")
+            return
         quoted_host=shlex.quote(host)
         expected_login=shlex.quote(profile.get("username","").strip())
         if not profile.get("username","").strip():
@@ -441,7 +508,7 @@ class App(tk.Tk):
             if not terminal:continue
             try:
                 subprocess.Popen(builder(terminal),cwd=str(HOME),start_new_session=True)
-                self.gitstatus.config(text=f"GitHub CLI HTTPS sign-in started for {host}. Complete the browser/device authorization.")
+                self.gitstatus.config(text=f"GitHub CLI HTTPS sign-in started for {host}. Complete browser authorization, then click Refresh auth status.")
                 return
             except OSError as exc:
                 self.gitstatus.config(text=f"Could not launch {name}: {exc}")
@@ -837,7 +904,13 @@ class App(tk.Tk):
         if not hasattr(self,"gitt"):return
         self.gitt.delete(*self.gitt.get_children())
         for p in self.cfg.data["git_profiles"]:
-            self.gitt.insert("","end",iid=p["id"],values=(p["name"],p["email"],p["auth"],p.get("host_alias","")))
+            if p.get("auth")=="https":
+                status,detail=github_cli_auth_status(p)
+            else:
+                key=Path(p.get("key_path","")).expanduser()
+                status="SSH key ready" if key.is_file() else "SSH key missing"
+                detail=str(key)
+            self.gitt.insert("","end",iid=p["id"],values=(p["name"],p["email"],p["auth"],p.get("host_alias",""),status))
     def add_profile(self):
         d=self.ask("Add Git account",[("name","Profile label (e.g. TechWills)",""),("git_name","Commit author name",""),("email","Commit email",""),("host","Git host (github.com / gitlab.com)","github.com"),("username","Hosting username",""),("auth","Authentication: ssh or https","ssh")])
         if not d:return
