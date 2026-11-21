@@ -222,7 +222,7 @@ def install_desktop_shortcuts():
         os.replace(temp_script,installed_script)
     source_assets=source_script.parent/"assets"
     target_assets=install_dir/"assets"
-    if source_assets.is_dir():
+    if source_assets.is_dir() and source_assets.resolve()!=target_assets.resolve():
         if target_assets.exists():
             shutil.rmtree(target_assets)
         shutil.copytree(source_assets,target_assets)
@@ -517,8 +517,15 @@ class App(tk.Tk):
             terminal=shutil.which(name)
             if not terminal:continue
             try:
-                subprocess.Popen(builder(terminal),cwd=str(HOME),start_new_session=True)
-                self.gitstatus.config(text=f"GitHub CLI HTTPS sign-in started for {host}. Complete browser authorization, then click Refresh auth status.")
+                process=subprocess.Popen(builder(terminal),cwd=str(HOME),start_new_session=True)
+                self.gitstatus.config(text=f"GitHub CLI HTTPS sign-in started for {host}. Complete browser authorization; status will refresh when the terminal closes.")
+                def refresh_after_login():
+                    process.wait()
+                    try:
+                        self.after(0,self.refresh_profiles)
+                    except tk.TclError:
+                        pass
+                threading.Thread(target=refresh_after_login,daemon=True).start()
                 return
             except OSError as exc:
                 self.gitstatus.config(text=f"Could not launch {name}: {exc}")
