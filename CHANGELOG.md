@@ -4,6 +4,9 @@ All notable DevPilot preview releases are documented here.
 
 ## Unreleased
 
+### Fixed
+- Desktop shortcut creation now always creates the XDG Desktop directory when needed, writes a directly executable `DevPilot.desktop` launcher with an explicit working directory, and provides a manual **Create Desktop Shortcut** action with the resulting paths.
+
 ### Added
 - Added a **Set up HTTPS authentication** action for HTTPS Git profiles. It launches GitHub CLI's browser/device sign-in, configures Git's credential helper, and verifies the authenticated GitHub username matches the selected profile without collecting passwords or tokens.
 
