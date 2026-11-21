@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DevPilot — Linux development environment manager (preview)."""
 from __future__ import annotations
-import json, os, shlex, shutil, subprocess, threading, uuid
+import json, os, re, shlex, shutil, subprocess, threading, uuid
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
@@ -209,10 +209,25 @@ def github_cli_auth_status(profile):
 
 
 def install_desktop_shortcuts():
-    """Install a menu launcher and a directly double-clickable Desktop shortcut."""
-    script=Path(__file__).resolve()
+    """Install a self-contained launcher in a stable per-user location."""
+    source_script=Path(__file__).resolve()
     data_home=Path(os.environ.get("XDG_DATA_HOME",HOME/".local/share")).expanduser()
-    icon_source=script.parent/"assets"/"devpilot.svg"
+    install_dir=data_home/"devpilot"
+    install_dir.mkdir(parents=True,exist_ok=True)
+    installed_script=install_dir/"linux_work_setup.py"
+    # Copy atomically so launching from the installed copy can also update itself.
+    if source_script != installed_script.resolve():
+        temp_script=install_dir/".linux_work_setup.py.tmp"
+        shutil.copy2(source_script,temp_script)
+        os.replace(temp_script,installed_script)
+    source_assets=source_script.parent/"assets"
+    target_assets=install_dir/"assets"
+    if source_assets.is_dir():
+        if target_assets.exists():
+            shutil.rmtree(target_assets)
+        shutil.copytree(source_assets,target_assets)
+
+    icon_source=target_assets/"devpilot.svg"
     icon_dir=data_home/"icons"/"hicolor"/"scalable"/"apps"
     applications_dir=data_home/"applications"
     icon_dir.mkdir(parents=True,exist_ok=True)
@@ -221,8 +236,8 @@ def install_desktop_shortcuts():
     if icon_source.is_file():
         shutil.copy2(icon_source,icon_target)
     icon_value=str(icon_target) if icon_target.is_file() else "applications-development"
-    escaped_script=str(script).replace("\\","\\\\").replace('"','\\"')
-    escaped_workdir=str(script.parent).replace("\\","\\\\").replace('"','\\"')
+
+    escaped_script=str(installed_script).replace("\\","\\\\").replace('"','\\"')
     desktop_entry=(
         "[Desktop Entry]\n"
         "Version=1.0\n"
@@ -230,7 +245,7 @@ def install_desktop_shortcuts():
         "Name=DevPilot\n"
         "Comment=Linux development environment manager\n"
         f'Exec=/usr/bin/python3 "{escaped_script}"\n'
-        f'TryExec=/usr/bin/python3\n'
+        "TryExec=/usr/bin/python3\n"
         f"Icon={icon_value}\n"
         "Terminal=false\n"
         "Categories=Development;Utility;\n"
@@ -239,7 +254,6 @@ def install_desktop_shortcuts():
     launcher=applications_dir/"devpilot.desktop"
     atomic_write(launcher,desktop_entry,0o755)
 
-    # Respect XDG's configured Desktop path, but create it if it does not exist.
     desktop_dir=None
     if shutil.which("xdg-user-dir"):
         result=run(["xdg-user-dir","DESKTOP"],5)
@@ -255,13 +269,9 @@ def install_desktop_shortcuts():
     if desktop_dir is None:
         desktop_dir=HOME/"Desktop"
     desktop_dir.mkdir(parents=True,exist_ok=True)
-
     desktop_launcher=desktop_dir/"DevPilot.desktop"
     atomic_write(desktop_launcher,desktop_entry,0o755)
-    try:
-        os.chmod(desktop_launcher,0o755)
-    except OSError:
-        pass
+    os.chmod(desktop_launcher,0o755)
     if shutil.which("gio"):
         try:
             subprocess.run(["gio","set",str(desktop_launcher),"metadata::trusted","true"],
