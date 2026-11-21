@@ -180,10 +180,64 @@ def parse_unmanaged_database_processes(ps_output):
         })
     return found
 
+def install_desktop_shortcuts():
+    """Install a persistent application launcher and, when available, a Desktop icon."""
+    script=Path(__file__).resolve()
+    data_home=Path(os.environ.get("XDG_DATA_HOME",HOME/".local/share")).expanduser()
+    icon_source=script.parent/"assets"/"devpilot.svg"
+    icon_dir=data_home/"icons"/"hicolor"/"scalable"/"apps"
+    applications_dir=data_home/"applications"
+    icon_dir.mkdir(parents=True,exist_ok=True)
+    applications_dir.mkdir(parents=True,exist_ok=True)
+    icon_target=icon_dir/"devpilot.svg"
+    if icon_source.is_file():
+        shutil.copy2(icon_source,icon_target)
+    icon_value=str(icon_target) if icon_target.is_file() else "applications-development"
+    escaped_script=str(script).replace("\\","\\\\").replace('"','\\"')
+    desktop_entry=(
+        "[Desktop Entry]\n"
+        "Version=1.0\n"
+        "Type=Application\n"
+        "Name=DevPilot\n"
+        "Comment=Linux development environment manager\n"
+        f'Exec=/usr/bin/python3 "{escaped_script}"\n'
+        f"Icon={icon_value}\n"
+        "Terminal=false\n"
+        "Categories=Development;Utility;\n"
+        "StartupNotify=true\n"
+    )
+    launcher=applications_dir/"devpilot.desktop"
+    atomic_write(launcher,desktop_entry,0o755)
+    desktop_dir=None
+    if shutil.which("xdg-user-dir"):
+        result=run(["xdg-user-dir","DESKTOP"],5)
+        if result.returncode==0 and result.stdout.strip():
+            desktop_dir=Path(result.stdout.strip()).expanduser()
+    if desktop_dir is None:
+        fallback=HOME/"Desktop"
+        desktop_dir=fallback if fallback.is_dir() else None
+    desktop_launcher=None
+    if desktop_dir is not None and desktop_dir.is_dir():
+        desktop_launcher=desktop_dir/"DevPilot.desktop"
+        atomic_write(desktop_launcher,desktop_entry,0o755)
+        if shutil.which("gio"):
+            try:
+                subprocess.run(["gio","set",str(desktop_launcher),"metadata::trusted","true"],
+                               capture_output=True,text=True,timeout=5,check=False)
+            except (OSError,subprocess.TimeoutExpired):
+                pass
+    return launcher,desktop_launcher
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__(); self.title("DevPilot — v"+APP_VERSION)
         self.geometry("1080x740"); self.minsize(900,620)
+        try:
+            install_desktop_shortcuts()
+        except Exception as e:
+            # Launcher creation is best-effort; never prevent the main application from opening.
+            print(f"DevPilot desktop shortcut could not be created: {e}")
         self.cfg=Config(); self.backup=Backup(); self.pkgmap={}
         self.agent_rows={}; self.agent_busy=False
         self.db_rows={}; self.db_busy=False
