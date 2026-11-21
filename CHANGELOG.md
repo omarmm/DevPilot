@@ -5,6 +5,11 @@ All notable DevPilot preview releases are documented here.
 ## Unreleased
 
 ### Fixed
+- Desktop and application-menu launchers now use a stable per-user installed copy instead of the source checkout path, avoiding stale working-directory errors after the repository is moved.
+- GitHub CLI installation now runs in the background with a visible indeterminate progress indicator and completion/error feedback.
+- Git profile rows now display per-account GitHub CLI authentication status and can be refreshed from the UI.
+
+### Fixed
 - Desktop shortcut creation now always creates the XDG Desktop directory when needed, writes a directly executable `DevPilot.desktop` launcher with an explicit working directory, and provides a manual **Create Desktop Shortcut** action with the resulting paths.
 
 ### Added
