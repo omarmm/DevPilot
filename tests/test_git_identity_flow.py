@@ -30,9 +30,12 @@ class GitIdentityFlowTests(unittest.TestCase):
         method = self.app_methods["apply_git"]
         self.assertIn("_git_repository_root", method)
         self.assertIn("_apply_profile_to_repository", method)
+        self.assertIn("apply_git_to_folder", method)
 
     def test_user_can_choose_repository_from_the_gui(self):
         self.assertIn("Apply to project folder", self.app_methods["_git_ui"])
+        self.assertIn("Apply assigned profiles", self.app_methods["_ws_ui"])
+        self.assertIn("_apply_workspace_git_configuration", self.app_methods["apply_workspace_profiles"])
         picker = self.app_methods["apply_git_to_folder"]
         self.assertIn("askdirectory", picker)
         self.assertIn("_apply_profile_to_repository", picker)
