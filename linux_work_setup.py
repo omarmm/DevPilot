@@ -345,8 +345,66 @@ class App(tk.Tk):
         ttk.Button(row,text="Generate SSH key",command=self.generate_key).pack(side="left",padx=6)
         ttk.Button(row,text="Apply Git / SSH configuration",command=self.apply_git).pack(side="left")
         ttk.Button(row,text="Apply to project folder…",command=self.apply_git_to_folder).pack(side="left",padx=(6,0))
-        ttk.Label(self.git,text="SSH: each account gets a distinct key and Host alias (for example github-work). HTTPS: DevPilot does not store tokens or passwords; configure a secure Git credential manager separately.",wraplength=930,foreground="#555").pack(anchor="w",pady=10)
+        ttk.Button(row,text="Set up HTTPS authentication",command=self.setup_https_authentication).pack(side="left",padx=(6,0))
+        ttk.Label(self.git,text="SSH: each account gets a distinct key and Host alias. HTTPS: select an HTTPS profile and use Set up HTTPS authentication to sign in with GitHub CLI; DevPilot never asks for or stores your password or token.",wraplength=930,foreground="#555").pack(anchor="w",pady=10)
         self.gitstatus=ttk.Label(self.git,text="No changes applied yet.",foreground="#555");self.gitstatus.pack(anchor="w")
+    def setup_https_authentication(self):
+        selection=self.gitt.selection()
+        if not selection:
+            messagebox.showinfo("Select Git profile","Select the HTTPS Git profile you want to authenticate.")
+            return
+        profile=next((p for p in self.cfg.data["git_profiles"] if p["id"]==selection[0]),None)
+        if not profile:
+            messagebox.showerror("Profile not found","Refresh the Git profiles and try again.")
+            return
+        if profile.get("auth")!="https":
+            messagebox.showinfo("SSH profile selected","This profile uses SSH. HTTPS authentication setup is only for HTTPS profiles.")
+            return
+        host=profile.get("host","github.com").strip()
+        if not host or any(ch in host for ch in "/\\ \t\r\n"):
+            messagebox.showerror("Invalid Git host","The profile's Git host is invalid.")
+            return
+        if not messagebox.askyesno("Set up HTTPS authentication",
+            f"Configure secure HTTPS authentication for {host}?\n\n"
+            "DevPilot will use GitHub CLI's browser/device login and configure Git to use its credential helper. "
+            "Your GitHub password or token will not be entered into or stored by DevPilot."):
+            return
+        if not shutil.which("gh"):
+            if not messagebox.askyesno("GitHub CLI required",
+                "GitHub CLI (gh) is not installed. Install it using the system package manager now?"):
+                return
+            try:
+                result=subprocess.run(["pkexec","apt-get","install","-y","gh"],check=False)
+                if result.returncode!=0:
+                    messagebox.showerror("Installation failed","GitHub CLI could not be installed. Check the system package manager and try again.")
+                    return
+            except OSError as exc:
+                messagebox.showerror("Installation failed",str(exc))
+                return
+        quoted_host=shlex.quote(host)
+        command=(f"gh auth login --hostname {quoted_host} --git-protocol https --web && "
+                 f"gh auth setup-git --hostname {quoted_host}; rc=$?; "
+                 "printf '\\n\\nHTTPS authentication setup finished (exit code %s).\\n' \"$rc\"; "
+                 "read -r -n 1 -s -p 'Press any key to close this terminal…'")
+        terminal_specs=[
+            ("x-terminal-emulator",lambda term:[term,"-e","bash","-lc",command]),
+            ("gnome-terminal",lambda term:[term,"--","bash","-lc",command]),
+            ("xfce4-terminal",lambda term:[term,"--command",f"bash -lc {shlex.quote(command)}"]),
+            ("konsole",lambda term:[term,"-e","bash","-lc",command]),
+            ("kitty",lambda term:[term,"bash","-lc",command]),
+            ("alacritty",lambda term:[term,"-e","bash","-lc",command]),
+        ]
+        for name,builder in terminal_specs:
+            terminal=shutil.which(name)
+            if not terminal:continue
+            try:
+                subprocess.Popen(builder(terminal),cwd=str(HOME),start_new_session=True)
+                self.gitstatus.config(text=f"GitHub CLI HTTPS sign-in started for {host}. Complete the browser/device authorization.")
+                return
+            except OSError as exc:
+                self.gitstatus.config(text=f"Could not launch {name}: {exc}")
+        messagebox.showerror("Terminal not found","No supported terminal emulator was found. Install a terminal emulator and try again.")
+
     def _backup_ui(self):
         ttk.Label(self.back,text="Creates timestamped copies before applying managed Git/SSH changes. Private SSH keys are excluded.",wraplength=900).pack(anchor="w")
         ttk.Button(self.back,text="Create backup now",command=self.do_backup).pack(anchor="w",pady=10)
