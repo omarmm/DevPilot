@@ -7,7 +7,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-APP_VERSION="0.3.2-preview"
+APP_VERSION="0.3.3-preview"
 HOME=Path.home()
 APP_DIR=HOME/".config/linux-work-setup"
 CONFIG_FILE=APP_DIR/"config.json"
