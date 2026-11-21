@@ -30,20 +30,20 @@ class HttpsAuthenticationFlowTests(unittest.TestCase):
         self.assertIn("askyesno", method)
 
     def test_uses_github_cli_browser_login_and_credential_helper(self):
-        method = self.methods["setup_https_authentication"]
+        method = self.methods["_launch_gh_login"]
         self.assertIn("gh auth login", method)
         self.assertIn("--git-protocol https", method)
         self.assertIn("--web", method)
         self.assertIn("gh auth setup-git", method)
 
     def test_checks_authenticated_account_matches_profile(self):
-        method = self.methods["setup_https_authentication"]
+        method = self.methods["_launch_gh_login"]
         self.assertIn("gh api user", method)
         self.assertIn("expected_login", method)
         self.assertIn("does not match", method)
 
     def test_does_not_request_or_store_password_or_token(self):
-        method = self.methods["setup_https_authentication"]
+        method = self.methods["_launch_gh_login"]
         self.assertNotIn('input(', method)
         self.assertNotIn("token =", method.lower())
 
