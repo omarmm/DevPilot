@@ -38,6 +38,9 @@ class DesktopLauncherTests(unittest.TestCase):
         self.assertIn("mkdir", installer)
         self.assertIn("Desktop", installer)
         self.assertIn("Exec=/usr/bin/python3", installer)
+        self.assertIn("install_dir=data_home/\"devpilot\"", installer)
+        self.assertIn("installed_script=install_dir/\"linux_work_setup.py\"", installer)
+        self.assertNotIn("Path=", installer)
         self.assertIn("Terminal=false", installer)
         self.assertIn("chmod", installer)
 
