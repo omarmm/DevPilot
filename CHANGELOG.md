@@ -4,6 +4,9 @@ All notable DevPilot preview releases are documented here.
 
 ## Unreleased
 
+### Added
+- Added a **Set up HTTPS authentication** action for HTTPS Git profiles. It launches GitHub CLI's browser/device sign-in, configures Git's credential helper, and verifies the authenticated GitHub username matches the selected profile without collecting passwords or tokens.
+
 ### Fixed
 - Applying a Git profile now detects the repository from which DevPilot was launched and writes the selected commit author name and email to that repository's local Git configuration.
 - Added a project-folder picker for cases where DevPilot was launched outside the target repository.
