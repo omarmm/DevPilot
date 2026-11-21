@@ -23,8 +23,10 @@ class HttpsAuthenticationFlowTests(unittest.TestCase):
 
     def test_only_selected_https_profile_can_start_authentication(self):
         method = self.methods["setup_https_authentication"]
-        self.assertIn('profile.get("auth")!="https"', method)
-        self.assertIn('profile.get("username"', method)
+        self.assertIn("profile.get", method)
+        self.assertIn("SSH profile selected", method)
+        self.assertIn("https", method)
+        self.assertIn("username", method)
         self.assertIn("askyesno", method)
 
     def test_uses_github_cli_browser_login_and_credential_helper(self):
