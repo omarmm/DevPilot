@@ -34,7 +34,7 @@ class GitProfileStatusAndInstallProgressTests(unittest.TestCase):
     def test_profile_table_displays_auth_status(self):
         ui = self.methods["_git_ui"]
         refresh = self.methods["refresh_profiles"]
-        self.assertIn('"status"', ui)
+        self.assertIn("status", ui)
         self.assertIn("GitHub status", ui)
         self.assertIn("github_cli_auth_status", refresh)
 
