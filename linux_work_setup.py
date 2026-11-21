@@ -276,6 +276,7 @@ class App(tk.Tk):
         ttk.Button(row,text="Register existing folder",command=self.import_ws).pack(side="left",padx=6)
         ttk.Button(row,text="Assign Git profile…",command=self.assign_profile).pack(side="left")
         ttk.Button(row,text="Refresh",command=self.refresh_workspaces).pack(side="left",padx=6)
+        ttk.Button(row,text="Apply assigned profiles",command=self.apply_workspace_profiles).pack(side="left",padx=6)
         ttk.Label(self.ws,text="A profile assigned to a workspace applies to repositories under that directory through Git conditional includes. Repository-local Git settings remain untouched.",wraplength=900,foreground="#555").pack(anchor="w",pady=10)
     def _git_ui(self):
         ttk.Label(self.git,text="Git profiles",font=("Sans",13,"bold")).pack(anchor="w")
@@ -777,17 +778,21 @@ class App(tk.Tk):
         except OSError:
             cwd=HOME
         repo=self._git_repository_root(cwd)
+        profiles=self.cfg.data["git_profiles"]
+        if not profiles:
+            messagebox.showinfo("No Git profiles","Add a Git account profile first.")
+            return
         if repo is not None:
-            profiles=self.cfg.data["git_profiles"]
-            if not profiles:
-                messagebox.showinfo("No Git profiles","Add a Git account profile first.")
-                return
             self._apply_profile_to_repository(repo,profiles)
             return
+        # GUI launches often start outside the user's project; let them select it.
+        self.apply_git_to_folder()
+
+    def apply_workspace_profiles(self):
         profiles=self.cfg.data["git_profiles"]
         assigned=[w for w in self.cfg.data["workspaces"] if w.get("git_profile_id")]
         if not profiles or not assigned:
-            messagebox.showinfo("Choose a project","DevPilot could not detect a Git repository in its launch folder. Use 'Apply to project folder…' to select a project, or register and assign a workspace.")
+            messagebox.showinfo("Nothing to apply","Add Git profiles, assign them to workspaces, and try again.")
             return
         self._apply_workspace_git_configuration(profiles,assigned)
 
