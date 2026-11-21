@@ -100,6 +100,8 @@ cd DevPilot
 python3 linux_work_setup.py
 ```
 
+On first launch, DevPilot automatically creates an application-menu entry and, when your desktop environment exposes a Desktop folder, a `DevPilot.desktop` shortcut there. You can then launch it with a double-click (some desktop environments may ask you to mark the shortcut as trusted once). The launcher points to the current script location, so keep the repository folder in place.
+
 **Run DevPilot as your regular user, not with `sudo`.** It requests elevated privileges only for APT package operations through `pkexec`.
 
 ## Git account setup
