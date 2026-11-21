@@ -26,8 +26,8 @@ class HttpsAuthenticationFlowTests(unittest.TestCase):
         self.assertIn("profile.get", method)
         self.assertIn("SSH profile selected", method)
         self.assertIn("https", method)
-        self.assertIn("username", method)
         self.assertIn("askyesno", method)
+        self.assertIn("username", self.methods["_launch_gh_login"])
 
     def test_uses_github_cli_browser_login_and_credential_helper(self):
         method = self.methods["_launch_gh_login"]
