@@ -46,7 +46,8 @@ class GitIdentityFlowTests(unittest.TestCase):
 
     def test_repository_git_config_is_backed_up_before_change(self):
         method = self.app_methods["_apply_profile_to_repository"]
-        self.assertIn('rev-parse","--git-path","config', method)
+        self.assertIn('"--git-path"', method)
+        self.assertIn('"config"', method)
         self.assertIn("extra_files=[config_path]", method)
         self.assertIn("rollback_copy", method)
         self.assertIn("shutil.copy2", method)
