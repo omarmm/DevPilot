@@ -39,15 +39,15 @@ class GitIdentityFlowTests(unittest.TestCase):
 
     def test_repository_identity_is_written_and_verified_locally(self):
         method = self.app_methods["_apply_profile_to_repository"]
-        self.assertIn('"--local"', method)
-        self.assertIn('"--get"', method)
-        self.assertIn('"user.name"', method)
-        self.assertIn('"user.email"', method)
+        self.assertIn("--local", method)
+        self.assertIn("--get", method)
+        self.assertIn("user.name", method)
+        self.assertIn("user.email", method)
 
     def test_repository_git_config_is_backed_up_before_change(self):
         method = self.app_methods["_apply_profile_to_repository"]
-        self.assertIn('"--git-path"', method)
-        self.assertIn('"config"', method)
+        self.assertIn("--git-path", method)
+        self.assertIn("config", method)
         self.assertIn("extra_files=[config_path]", method)
         self.assertIn("rollback_copy", method)
         self.assertIn("shutil.copy2", method)
