@@ -4,7 +4,7 @@
 
 DevPilot is a lightweight desktop utility for setting up and managing a Linux developer workstation. It brings development package management, project workspaces, multiple Git identities, SSH key profiles, safe configuration backups, and terminal AI coding agents into one guided interface.
 
-> **Current status:** Early development / preview (`0.3.1-preview`). Features and configuration behavior may change.
+> **Current status:** Early development / preview (`0.3.3-preview`). Features and configuration behavior may change.
 
 ## Features
 
