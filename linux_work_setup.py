@@ -81,7 +81,7 @@ class SafeConfigEditor:
 
 class Backup:
     TARGETS=[".gitconfig",".ssh/config",".bashrc",".zshrc"]
-    def create(self):
+    def create(self, extra_files=()):
         dest=BACKUP_DIR/datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         dest.mkdir(parents=True,exist_ok=False)
         items=[]
@@ -89,6 +89,15 @@ class Backup:
             src=HOME/rel; item={"path":rel,"exists":src.is_file(),"copied":False}
             if src.is_file():
                 out=dest/rel; out.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,out); item["copied"]=True
+                item["backup_path"]=str(out.relative_to(dest))
+            items.append(item)
+        for index, extra in enumerate(extra_files):
+            src=Path(extra).expanduser().resolve()
+            item={"path":str(src),"exists":src.is_file(),"copied":False}
+            if src.is_file():
+                out=dest/"extra"/f"{index}-{src.name}"
+                out.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,out)
+                item["copied"]=True;item["backup_path"]=str(out.relative_to(dest))
             items.append(item)
         atomic_write(dest/"manifest.json",json.dumps({"items":items},indent=2))
         try:
@@ -803,7 +812,16 @@ class App(tk.Tk):
         if not messagebox.askyesno("Confirm Git identity",f"Set this repository's commit identity?\n\nRepository: {repo}\nName: {profile['git_name']}\nEmail: {profile['email']}"):
             return
         try:
-            backup=self.backup.create()
+            config_result=run(["git","-C",str(repo),"rev-parse","--git-path","config"],8)
+            if config_result.returncode or not config_result.stdout.strip():
+                raise RuntimeError(config_result.stderr.strip() or "Could not locate this repository's local Git config.")
+            config_path=Path(config_result.stdout.strip())
+            if not config_path.is_absolute():
+                config_path=(repo/config_path).resolve()
+            if not config_path.is_file():
+                raise RuntimeError(f"Repository Git config was not found: {config_path}")
+            backup=self.backup.create(extra_files=[config_path])
+            rollback_copy=backup/"extra"/f"0-{config_path.name}"
             for key,value in (("user.name",profile["git_name"]),("user.email",profile["email"])):
                 result=run(["git","-C",str(repo),"config","--local",key,value],8)
                 if result.returncode:
@@ -819,6 +837,12 @@ class App(tk.Tk):
             self.gitstatus.config(text=f"Verified for {repo}: {actual['user.name']} <{actual['user.email']}>")
             messagebox.showinfo("Git identity applied",f"Verified successfully.\n\nRepository: {repo}\nName: {actual['user.name']}\nEmail: {actual['user.email']}\n\nBackup: {backup}\nSSH host aliases are managed separately.")
         except Exception as e:
+            # Restore the repository config if application or verification failed.
+            try:
+                if 'rollback_copy' in locals() and rollback_copy.is_file() and 'config_path' in locals():
+                    shutil.copy2(rollback_copy,config_path)
+            except OSError:
+                pass
             messagebox.showerror("Could not apply Git identity",str(e))
 
     def _apply_workspace_git_configuration(self, profiles, assigned):
