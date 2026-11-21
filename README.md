@@ -100,7 +100,7 @@ cd DevPilot
 python3 linux_work_setup.py
 ```
 
-On first launch, DevPilot automatically creates an application-menu entry and, when your desktop environment exposes a Desktop folder, a `DevPilot.desktop` shortcut there. You can then launch it with a double-click (some desktop environments may ask you to mark the shortcut as trusted once). The launcher points to the current script location, so keep the repository folder in place.
+On first launch, DevPilot automatically creates an application-menu entry and a `DevPilot.desktop` shortcut in your XDG Desktop folder (creating `~/Desktop` if no Desktop folder is configured). You can also click **Create Desktop Shortcut** in the app header to recreate it at any time. The launcher points to the current script location, so keep the repository folder in place. If Linux Mint asks for permission, right-click the shortcut and choose **Allow Launching**.
 
 **Run DevPilot as your regular user, not with `sudo`.** It requests elevated privileges only for APT package operations through `pkexec`.
 
