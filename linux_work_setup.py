@@ -280,6 +280,7 @@ class App(tk.Tk):
         ttk.Button(row,text="Remove selected",command=self.remove_profile).pack(side="left")
         ttk.Button(row,text="Generate SSH key",command=self.generate_key).pack(side="left",padx=6)
         ttk.Button(row,text="Apply Git / SSH configuration",command=self.apply_git).pack(side="left")
+        ttk.Button(row,text="Apply to project folder…",command=self.apply_git_to_folder).pack(side="left",padx=(6,0))
         ttk.Label(self.git,text="SSH: each account gets a distinct key and Host alias (for example github-work). HTTPS: DevPilot does not store tokens or passwords; configure a secure Git credential manager separately.",wraplength=930,foreground="#555").pack(anchor="w",pady=10)
         self.gitstatus=ttk.Label(self.git,text="No changes applied yet.",foreground="#555");self.gitstatus.pack(anchor="w")
     def _backup_ui(self):
@@ -739,14 +740,92 @@ class App(tk.Tk):
     def do_backup(self):
         try:p=self.backup.create();self.backlog.insert("end",f"Backup created: {p}\n");messagebox.showinfo("Backup complete",str(p))
         except Exception as e:messagebox.showerror("Backup failed",str(e))
+    def _git_repository_root(self, folder):
+        """Return the Git work-tree root for a folder, or None when it is not a repository."""
+        folder=Path(folder).expanduser().resolve()
+        result=run(["git","-C",str(folder),"rev-parse","--show-toplevel"],8)
+        if result.returncode!=0 or not result.stdout.strip():
+            return None
+        return Path(result.stdout.strip()).resolve()
+
+    def apply_git_to_folder(self):
+        folder=filedialog.askdirectory(title="Choose project folder to configure Git identity")
+        if not folder:return
+        root=self._git_repository_root(folder)
+        if root is None:
+            messagebox.showerror("Not a Git repository",f"No Git repository was found in:\n{folder}\n\nSelect an existing Git repository first.")
+            return
+        profiles=self.cfg.data["git_profiles"]
+        if not profiles:
+            messagebox.showinfo("No Git profiles","Add a Git account profile first.")
+            return
+        self._apply_profile_to_repository(root,profiles)
+
     def apply_git(self):
+        # Apply directly to the repository from which DevPilot was launched, if any.
+        try:
+            cwd=Path.cwd().resolve()
+        except OSError:
+            cwd=HOME
+        repo=self._git_repository_root(cwd)
+        if repo is not None:
+            profiles=self.cfg.data["git_profiles"]
+            if not profiles:
+                messagebox.showinfo("No Git profiles","Add a Git account profile first.")
+                return
+            self._apply_profile_to_repository(repo,profiles)
+            return
         profiles=self.cfg.data["git_profiles"]
         assigned=[w for w in self.cfg.data["workspaces"] if w.get("git_profile_id")]
-        if not profiles or not assigned:messagebox.showinfo("Nothing to apply","Add Git profiles and assign at least one workspace.");return
-        if not messagebox.askyesno("Apply configuration","Back up current config, then update managed sections in ~/.gitconfig and ~/.ssh/config? Existing unmanaged content will be preserved."):return
+        if not profiles or not assigned:
+            messagebox.showinfo("Choose a project","DevPilot could not detect a Git repository in its launch folder. Use 'Apply to project folder…' to select a project, or register and assign a workspace.")
+            return
+        self._apply_workspace_git_configuration(profiles,assigned)
+
+    def _apply_profile_to_repository(self, repo, profiles):
+        names=[p["name"] for p in profiles]
+        win=tk.Toplevel(self);win.title("Choose Git identity");win.transient(self);win.grab_set()
+        selected=tk.StringVar(value=names[0])
+        ttk.Label(win,text=f"Apply Git commit identity to repository:\n{repo}",wraplength=560).pack(padx=14,pady=(14,8))
+        ttk.Label(win,text="Git profile").pack(anchor="w",padx=14)
+        ttk.Combobox(win,textvariable=selected,values=names,state="readonly",width=42).pack(padx=14,pady=6)
+        ttk.Label(win,text="Only this repository's local user.name and user.email will change.",wraplength=560,foreground="#555").pack(padx=14,pady=8)
+        outcome={"profile":None}
+        def apply():
+            profile=next((p for p in profiles if p["name"]==selected.get()),None)
+            if profile:
+                outcome["profile"]=profile
+                win.destroy()
+        ttk.Button(win,text="Apply identity",command=apply).pack(pady=(2,14))
+        win.wait_window()
+        profile=outcome["profile"]
+        if not profile:return
+        if not messagebox.askyesno("Confirm Git identity",f"Set this repository's commit identity?\n\nRepository: {repo}\nName: {profile['git_name']}\nEmail: {profile['email']}"):
+            return
         try:
             backup=self.backup.create()
-            # Build isolated profile config files and includeIf directives.
+            for key,value in (("user.name",profile["git_name"]),("user.email",profile["email"])):
+                result=run(["git","-C",str(repo),"config","--local",key,value],8)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip() or f"Could not set {key}")
+            actual={}
+            for key in ("user.name","user.email"):
+                result=run(["git","-C",str(repo),"config","--local","--get",key],8)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip() or f"Could not verify {key}")
+                actual[key]=result.stdout.strip()
+            if actual["user.name"]!=profile["git_name"] or actual["user.email"]!=profile["email"]:
+                raise RuntimeError("Git identity verification failed.")
+            self.gitstatus.config(text=f"Verified for {repo}: {actual['user.name']} <{actual['user.email']}>")
+            messagebox.showinfo("Git identity applied",f"Verified successfully.\n\nRepository: {repo}\nName: {actual['user.name']}\nEmail: {actual['user.email']}\n\nBackup: {backup}\nSSH host aliases are managed separately.")
+        except Exception as e:
+            messagebox.showerror("Could not apply Git identity",str(e))
+
+    def _apply_workspace_git_configuration(self, profiles, assigned):
+        if not messagebox.askyesno("Apply configuration","Back up current config, then update managed sections in ~/.gitconfig and ~/.ssh/config? Existing unmanaged content will be preserved."):
+            return
+        try:
+            backup=self.backup.create()
             includes=[]
             for p in profiles:
                 pf=PROFILE_DIR/(p["id"]+".gitconfig")
@@ -768,9 +847,10 @@ class App(tk.Tk):
             if any(p["auth"]=="ssh" for p in profiles):
                 SafeConfigEditor.replace_block(HOME/".ssh"/"config",SSH_BEGIN,SSH_END,"\n".join(sshlines))
                 os.chmod(HOME/".ssh",0o700)
-            self.gitstatus.config(text=f"Applied. Backup: {backup}")
-            messagebox.showinfo("Applied",f"Git conditional includes and SSH host aliases updated.\nBackup: {backup}\n\nFor SSH remotes, use the generated Host alias, e.g. git@github-work:owner/repo.git.\nFor HTTPS, use a secure credential helper; no token/password was saved.")
-        except Exception as e:messagebox.showerror("Could not apply",str(e))
+            self.gitstatus.config(text=f"Applied workspace Git/SSH configuration. Backup: {backup}")
+            messagebox.showinfo("Applied",f"Workspace Git conditional includes and SSH host aliases updated.\nBackup: {backup}\n\nFor SSH remotes, use the generated Host alias, e.g. git@github-work:owner/repo.git.\nFor HTTPS, use a secure credential helper; no token/password was saved.")
+        except Exception as e:
+            messagebox.showerror("Could not apply",str(e))
 
 if __name__=="__main__":
     App().mainloop()
