@@ -382,7 +382,16 @@ class App(tk.Tk):
                 messagebox.showerror("Installation failed",str(exc))
                 return
         quoted_host=shlex.quote(host)
+        expected_login=shlex.quote(profile.get("username","").strip())
+        if not profile.get("username","").strip():
+            messagebox.showerror("Missing GitHub username","Edit this Git profile and enter its GitHub username first.")
+            return
         command=(f"gh auth login --hostname {quoted_host} --git-protocol https --web && "
+                 f"login=$(gh api user --hostname {quoted_host} --jq .login) && "
+                 f"if [ \"$login\" != {expected_login} ]; then "
+                 f"echo 'Signed-in GitHub account does not match this DevPilot profile.'; "
+                 "echo \"Expected: \""+expected_login+"\"; echo \"Authenticated: $login\"; "
+                 "exit 1; fi && "
                  f"gh auth setup-git --hostname {quoted_host}; rc=$?; "
                  "printf '\\n\\nHTTPS authentication setup finished (exit code %s).\\n' \"$rc\"; "
                  "read -r -n 1 -s -p 'Press any key to close this terminal…'")
