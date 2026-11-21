@@ -111,7 +111,7 @@ python3 linux_work_setup.py
 5. Open **Project Workspaces**, select a workspace, and choose **Assign Git profile…**.
 6. Return to **Git Accounts & SSH** and select **Apply Git / SSH Configuration**. When DevPilot was launched from inside a Git repository, it detects that repository and asks which profile to apply.
 7. When DevPilot was not launched from the project folder, select **Apply to project folder…**, choose the repository directory, and select the Git profile. DevPilot writes and verifies repository-local `user.name` and `user.email`; you do not need to edit Git configuration in a terminal.
-8. Use the generated SSH host alias in SSH remotes. For example:
+8. To apply all saved workspace-to-profile assignments through Git conditional includes and update SSH aliases, use **Apply assigned profiles** in the **Project Workspaces** tab. Use the generated SSH host alias in SSH remotes. For example:
 
 ```bash
 git remote set-url origin git@github-work:OWNER/REPOSITORY.git
