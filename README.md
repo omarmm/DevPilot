@@ -125,7 +125,7 @@ Replace `github-work`, `OWNER`, and `REPOSITORY` with the values for your profil
 
 - Git conditional includes configure commit identity (author name and email); they do not authenticate to the hosting provider.
 - SSH authentication requires adding the generated public key to the corresponding hosting account and using the profile's SSH host alias in the remote URL.
-- HTTPS profile metadata does not contain passwords or tokens. Automatic per-account HTTPS credential isolation is **not implemented** in this preview; configure a secure Git credential manager on your system.
+- HTTPS profile metadata does not contain passwords or tokens. Select an HTTPS profile and use **Set up HTTPS authentication** to sign in through GitHub CLI's browser/device flow; DevPilot verifies the authenticated GitHub username matches the selected profile and configures Git's credential helper. HTTPS account switching still depends on GitHub CLI's stored host account.
 - Repository-local Git settings can override inherited settings. DevPilot does not rewrite repository-local configuration.
 
 ## Configuration and safety
