@@ -181,7 +181,7 @@ def parse_unmanaged_database_processes(ps_output):
     return found
 
 def install_desktop_shortcuts():
-    """Install a persistent application launcher and, when available, a Desktop icon."""
+    """Install a menu launcher and a directly double-clickable Desktop shortcut."""
     script=Path(__file__).resolve()
     data_home=Path(os.environ.get("XDG_DATA_HOME",HOME/".local/share")).expanduser()
     icon_source=script.parent/"assets"/"devpilot.svg"
@@ -194,6 +194,7 @@ def install_desktop_shortcuts():
         shutil.copy2(icon_source,icon_target)
     icon_value=str(icon_target) if icon_target.is_file() else "applications-development"
     escaped_script=str(script).replace("\\","\\\\").replace('"','\\"')
+    escaped_workdir=str(script.parent).replace("\\","\\\\").replace('"','\\"')
     desktop_entry=(
         "[Desktop Entry]\n"
         "Version=1.0\n"
@@ -201,6 +202,8 @@ def install_desktop_shortcuts():
         "Name=DevPilot\n"
         "Comment=Linux development environment manager\n"
         f'Exec=/usr/bin/python3 "{escaped_script}"\n'
+        f'TryExec=/usr/bin/python3\n'
+        f'Path="{escaped_workdir}"\n'
         f"Icon={icon_value}\n"
         "Terminal=false\n"
         "Categories=Development;Utility;\n"
@@ -208,26 +211,43 @@ def install_desktop_shortcuts():
     )
     launcher=applications_dir/"devpilot.desktop"
     atomic_write(launcher,desktop_entry,0o755)
+
+    # Respect XDG's configured Desktop path, but create it if it does not exist.
     desktop_dir=None
     if shutil.which("xdg-user-dir"):
         result=run(["xdg-user-dir","DESKTOP"],5)
         if result.returncode==0 and result.stdout.strip():
-            desktop_dir=Path(result.stdout.strip()).expanduser()
+            candidate=Path(result.stdout.strip()).expanduser()
+            if candidate.is_absolute():
+                desktop_dir=candidate
     if desktop_dir is None:
-        fallback=HOME/"Desktop"
-        desktop_dir=fallback if fallback.is_dir() else None
-    desktop_launcher=None
-    if desktop_dir is not None and desktop_dir.is_dir():
-        desktop_launcher=desktop_dir/"DevPilot.desktop"
-        atomic_write(desktop_launcher,desktop_entry,0o755)
-        if shutil.which("gio"):
-            try:
-                subprocess.run(["gio","set",str(desktop_launcher),"metadata::trusted","true"],
-                               capture_output=True,text=True,timeout=5,check=False)
-            except (OSError,subprocess.TimeoutExpired):
-                pass
-    return launcher,desktop_launcher
+        for candidate in (HOME/"Desktop",HOME/"سطح المكتب"):
+            if candidate.exists():
+                desktop_dir=candidate
+                break
+    if desktop_dir is None:
+        desktop_dir=HOME/"Desktop"
+    desktop_dir.mkdir(parents=True,exist_ok=True)
 
+    desktop_launcher=desktop_dir/"DevPilot.desktop"
+    atomic_write(desktop_launcher,desktop_entry,0o755)
+    try:
+        os.chmod(desktop_launcher,0o755)
+    except OSError:
+        pass
+    if shutil.which("gio"):
+        try:
+            subprocess.run(["gio","set",str(desktop_launcher),"metadata::trusted","true"],
+                           capture_output=True,text=True,timeout=5,check=False)
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+    if shutil.which("update-desktop-database"):
+        try:
+            subprocess.run(["update-desktop-database",str(applications_dir)],
+                           capture_output=True,text=True,timeout=5,check=False)
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+    return launcher,desktop_launcher
 
 class App(tk.Tk):
     def __init__(self):
@@ -249,6 +269,7 @@ class App(tk.Tk):
         h=ttk.Frame(self,padding=14);h.pack(fill="x")
         ttk.Label(h,text="DevPilot",font=("Sans",17,"bold")).pack(anchor="w")
         ttk.Label(h,text="Development Setup • Database servers • Project Workspaces • Git identities • AI agents",foreground="#555").pack(anchor="w")
+        ttk.Button(h,text="Create Desktop Shortcut",command=self.create_desktop_shortcut).pack(anchor="e")
         self.tabs=ttk.Notebook(self);self.tabs.pack(fill="both",expand=True,padx=12,pady=(0,12))
         self.dev=ttk.Frame(self.tabs,padding=10);self.db=ttk.Frame(self.tabs,padding=10);self.ws=ttk.Frame(self.tabs,padding=10)
         self.git=ttk.Frame(self.tabs,padding=10);self.agents=ttk.Frame(self.tabs,padding=10)
@@ -256,6 +277,18 @@ class App(tk.Tk):
         for frame,label in [(self.dev,"Development Setup"),(self.db,"Database Servers"),(self.ws,"Project Workspaces"),(self.git,"Git Accounts & SSH"),(self.agents,"AI Agents"),(self.back,"Backup & Recovery")]:
             self.tabs.add(frame,text=label)
         self._dev_ui();self._db_ui();self._ws_ui();self._git_ui();self._agents_ui();self._backup_ui()
+    def create_desktop_shortcut(self):
+        try:
+            menu_launcher,desktop_launcher=install_desktop_shortcuts()
+            messagebox.showinfo(
+                "DevPilot shortcut created",
+                f"Application menu launcher:\n{menu_launcher}\n\nDesktop shortcut:\n{desktop_launcher}\n\n"
+                "If your desktop asks for confirmation, right-click DevPilot.desktop and choose "
+                "'Allow Launching' or 'Trust and Launch'."
+            )
+        except Exception as exc:
+            messagebox.showerror("Could not create shortcut",str(exc))
+
     def _dev_ui(self):
         bar=ttk.Frame(self.dev);bar.pack(fill="x")
         ttk.Label(bar,text="Select package rows or groups. Status is checked against APT.").pack(side="left")
