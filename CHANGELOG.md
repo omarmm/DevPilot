@@ -2,6 +2,13 @@
 
 All notable DevPilot preview releases are documented here.
 
+## Unreleased
+
+### Fixed
+- Applying a Git profile now detects the repository from which DevPilot was launched and writes the selected commit author name and email to that repository's local Git configuration.
+- Added a project-folder picker for cases where DevPilot was launched outside the target repository.
+- Verifies the resulting local Git identity and backs up the target repository's `.git/config` before changing it; restores the saved file if applying or verification fails.
+
 ## [0.3.0-preview] - 2026-11-20
 
 ### Added
