@@ -595,8 +595,10 @@ class App(tk.Tk):
                         else:
                             command=["pkexec",executable,"--pipe"]
                             result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
-                            code=result.returncode
-                            detail=(result.stderr or result.stdout or "").strip()
+                            transcript=(result.stdout or "")+"\\n"+(result.stderr or "")
+                            summary=re.search(r"errors:\\s*(\\d+)",transcript)
+                            code=0 if result.returncode==0 and summary and int(summary.group(1))==0 else 1
+                            detail=transcript.strip()
                     else:
                         result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
                         code=result.returncode
