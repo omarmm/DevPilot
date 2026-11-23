@@ -257,6 +257,16 @@ def build_redis_acl_command(username,password,key_pattern):
     return "".join(chunks)
 
 
+
+def redis_acl_user_exists(acl_list,username):
+    """Return whether ACL LIST contains the exact Redis username."""
+    return any(
+        line.startswith("user "+username+" ")
+        or line=="user "+username
+        for line in acl_list.splitlines()
+    )
+
+
 def github_cli_auth_status(profile):
     """Return (label, detail) for the selected GitHub account without exposing credentials."""
     if not shutil.which("gh"):
@@ -571,11 +581,26 @@ class App(tk.Tk):
                         command=["pkexec",executable,"--protocol=socket","-u","root","--batch","--skip-column-names"]
                     elif server_id=="postgresql":
                         command=["pkexec","--user","postgres",executable,"--no-psqlrc","--set","ON_ERROR_STOP=1","--dbname",scope.get().strip()]
+                    elif server_id=="redis":
+                        check=subprocess.run(
+                            ["pkexec",executable,"--raw","ACL","LIST"],
+                            capture_output=True,text=True,timeout=30,check=False
+                        )
+                        if check.returncode:
+                            code=check.returncode
+                            detail=(check.stderr or check.stdout or "Redis ACL inspection failed.").strip()
+                        elif redis_acl_user_exists(check.stdout,user):
+                            code=1
+                            detail=f"Redis user '{user}' already exists. Existing ACL users are never modified."
+                        else:
+                            command=["pkexec",executable,"--pipe"]
+                            result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
+                            code=result.returncode
+                            detail=(result.stderr or result.stdout or "").strip()
                     else:
-                        command=["pkexec",executable,"--pipe"]
-                    result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
-                    code=result.returncode
-                    detail=(result.stderr or result.stdout or "").strip()
+                        result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
+                        code=result.returncode
+                        detail=(result.stderr or result.stdout or "").strip()
                 except (OSError,subprocess.TimeoutExpired) as exc:
                     code=1;detail=str(exc)
                 self.after(0,self._database_access_done,server_id,label,user,code,detail)
