@@ -196,18 +196,18 @@ def build_mysql_user_sql(username, password, privilege_mode, database=""):
     if len(password) < 12 or len(password) > 128:
         raise ValueError("Password must be between 12 and 128 characters.")
     if privilege_mode == "admin":
-        grant = "GRANT ALL PRIVILEGES ON *.* TO {account} WITH GRANT OPTION;\\nGRANT CREATE USER ON *.* TO {account} WITH GRANT OPTION;"
+        grant = "GRANT ALL PRIVILEGES ON *.* TO {account} WITH GRANT OPTION;\nGRANT CREATE USER ON *.* TO {account} WITH GRANT OPTION;"
     elif privilege_mode == "database":
         if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", database or ""):
             raise ValueError("Database name must contain 1–64 letters, digits, or underscores.")
-        grant = f"GRANT ALL PRIVILEGES ON \`{database}\`.* TO {{account}};"
+        grant = f"GRANT ALL PRIVILEGES ON `{database}`.* TO {{account}};"
     else:
         raise ValueError("Choose a supported privilege level.")
     account = mysql_sql_literal(username) + "@'127.0.0.1'"
     return (
-        f"CREATE USER {account} IDENTIFIED BY {mysql_sql_literal(password)};\\n"
+        f"CREATE USER {account} IDENTIFIED BY {mysql_sql_literal(password)};\n"
         + grant.format(account=account)
-        + "\\nFLUSH PRIVILEGES;\\n"
+        + "\nFLUSH PRIVILEGES;\n"
     )
 
 
@@ -471,7 +471,7 @@ class App(tk.Tk):
             except ValueError as exc:
                 messagebox.showerror("Invalid account details",str(exc),parent=dialog);return
             scope=("all local databases and user management" if privilege.get()=="admin" else f"database '{database.get().strip()}' only")
-            if not messagebox.askyesno("Confirm MySQL account",f"Create '{user}'@'127.0.0.1' with access to {scope}?\\n\\nExisting accounts are never overwritten. DevPilot will not save the password.",parent=dialog):
+            if not messagebox.askyesno("Confirm MySQL account",f"Create '{user}'@'127.0.0.1' with access to {scope}?\n\nExisting accounts are never overwritten. DevPilot will not save the password.",parent=dialog):
                 return
             dialog.destroy()
             self.db_access_btn.configure(state="disabled")
@@ -496,12 +496,12 @@ class App(tk.Tk):
         self.db_access_btn.configure(state="normal")
         if code==0:
             self.db_status_label.config(text=f"MySQL account '{username}' created successfully.")
-            messagebox.showinfo("MySQL access configured",f"Account '{username}'@'127.0.0.1' is ready.\\n\\nBeekeeper Studio connection:\\nHost: 127.0.0.1\\nPort: 3306\\nUsername: {username}\\nPassword: the password you entered\\n\\nDevPilot did not save the password.")
+            messagebox.showinfo("MySQL access configured",f"Account '{username}'@'127.0.0.1' is ready.\n\nBeekeeper Studio connection:\nHost: 127.0.0.1\nPort: 3306\nUsername: {username}\nPassword: the password you entered\n\nDevPilot did not save the password.")
         else:
             self.db_status_label.config(text="MySQL account creation failed or was cancelled.")
             safe_detail=detail[-1800:] if detail else "Administrator authorization was cancelled or MySQL returned an error."
             if "already exists" in safe_detail.lower():
-                safe_detail += "\\n\\nThe existing account was left unchanged. Choose another username."
+                safe_detail += "\n\nThe existing account was left unchanged. Choose another username."
             messagebox.showerror("Could not configure MySQL access",safe_detail)
 
     def _ws_ui(self):
@@ -623,7 +623,7 @@ class App(tk.Tk):
                  "echo \"Authenticated: $login\"; "
                  "exit 1; fi && "
                  f"gh auth setup-git --hostname {quoted_host}; rc=$?; "
-                 "printf '\\n\\nHTTPS authentication setup finished (exit code %s).\\n' \"$rc\"; "
+                 "printf '\n\nHTTPS authentication setup finished (exit code %s).\n' \"$rc\"; "
                  "read -r -n 1 -s -p 'Press any key to close this terminal…'")
         terminal_specs=[
             ("x-terminal-emulator",lambda term:[term,"-e","bash","-lc",command]),
@@ -977,7 +977,7 @@ class App(tk.Tk):
             messagebox.showerror("Invalid project directory","Choose an existing project directory before launching the agent.");return
         agent=record["agent"]
         command=(f"cd -- {shlex.quote(str(directory.resolve()))} && {shlex.quote(executable)}; rc=$?; "
-                 "printf '\\n\\nAgent exited with code %s.\\n' \"$rc\"; "
+                 "printf '\n\nAgent exited with code %s.\n' \"$rc\"; "
                  "read -r -n 1 -s -p 'Press any key to close this terminal…'")
         terminal_specs=[
             ("x-terminal-emulator",lambda term:[term,"-e","bash","-lc",command]),
