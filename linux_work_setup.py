@@ -211,6 +211,54 @@ def build_mysql_user_sql(username, password, privilege_mode, database=""):
     )
 
 
+
+def _validate_access_credentials(username,password):
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}",username or ""):
+        raise ValueError("Username must contain 1–32 letters, digits, or underscores.")
+    if not 12<=len(password)<=128:
+        raise ValueError("Password must be between 12 and 128 characters.")
+
+
+def _sql_string_literal(value):
+    value=str(value)
+    if any(ord(ch)<32 or ord(ch)==127 for ch in value):
+        raise ValueError("Control characters are not allowed.")
+    return "'" + value.replace("'","''") + "'"
+
+
+def build_postgresql_user_sql(username,password,database):
+    """Create a local PostgreSQL login scoped to one existing database."""
+    _validate_access_credentials(username,password)
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,63}",database or ""):
+        raise ValueError("Database name must contain 1–63 letters, digits, or underscores.")
+    role='"'+username+'"'
+    db='"'+database+'"'
+    return (
+        f"CREATE ROLE {role} WITH LOGIN PASSWORD {_sql_string_literal(password)};\n"
+        f"GRANT CONNECT ON DATABASE {db} TO {role};\n"
+        f"\\connect {database}\n"
+        f"GRANT USAGE, CREATE ON SCHEMA public TO {role};\n"
+        f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {role};\n"
+        f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {role};\n"
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {role};\n"
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {role};\n"
+    )
+
+
+def build_redis_acl_command(username,password,key_pattern):
+    """Build a RESP command for a non-admin Redis application ACL user."""
+    _validate_access_credentials(username,password)
+    if not re.fullmatch(r"[A-Za-z0-9:_*.-]{1,128}",key_pattern or ""):
+        raise ValueError("Key pattern may contain only letters, digits, colon, underscore, dot, hyphen, and *.")
+    args=["ACL","SETUSER",username,"reset","on",">"+password,"~"+key_pattern,
+          "+@read","+@write","+@connection","+@transaction"]
+    chunks=[f"*{len(args)}\r\n"]
+    for arg in args:
+        chunks.append(f"${len(arg.encode('utf-8'))}\r\n")
+        chunks.append(arg+"\r\n")
+    return "".join(chunks)
+
+
 def github_cli_auth_status(profile):
     """Return (label, detail) for the selected GitHub account without exposing credentials."""
     if not shutil.which("gh"):
@@ -405,8 +453,21 @@ class App(tk.Tk):
         self.db_enable_btn.pack(side="left",padx=(7,0))
         self.db_disable_btn=ttk.Button(actions,text="Disable at boot",command=lambda:self.database_service_action("disable"))
         self.db_disable_btn.pack(side="left",padx=(7,0))
-        self.db_access_btn=ttk.Button(actions,text="Configure MySQL Access…",command=self.configure_mysql_access)
-        self.db_access_btn.pack(side="left",padx=(7,0))
+        access_actions=ttk.Frame(self.db);access_actions.pack(fill="x",pady=(4,0))
+        ttk.Label(access_actions,text="Access configuration:").pack(side="left",padx=(0,8))
+        self.db_access_buttons={}
+        for server_id,label in (
+            ("mysql","Configure MySQL Access…"),
+            ("mariadb","Configure MariaDB Access…"),
+            ("postgresql","Configure PostgreSQL Access…"),
+            ("redis","Configure Redis ACL…"),
+        ):
+            button=ttk.Button(
+                access_actions,text=label,
+                command=lambda sid=server_id:self.configure_database_access(sid)
+            )
+            button.pack(side="left",padx=(0,6))
+            self.db_access_buttons[server_id]=button
         self.db_service_buttons=[self.db_start_btn,self.db_stop_btn,self.db_restart_btn,self.db_enable_btn,self.db_disable_btn]
         self.db_progress=ttk.Progressbar(self.db,mode="indeterminate")
         self.db_progress.pack(fill="x",pady=(8,3))
@@ -419,24 +480,44 @@ class App(tk.Tk):
 
 
     def configure_mysql_access(self):
-        record=self.db_rows.get("mysql")
-        if not record or record.get("package_state")=="Not installed":
-            messagebox.showinfo("MySQL is not installed","Install MySQL Server first, then configure database access.")
+        """Backward-compatible entry point for the MySQL access button."""
+        self.configure_database_access("mysql")
+
+    def configure_database_access(self,server_id):
+        labels={"mysql":"MySQL","mariadb":"MariaDB","postgresql":"PostgreSQL","redis":"Redis"}
+        label=labels.get(server_id)
+        if not label:return
+        record=self.db_rows.get(server_id)
+        if not record or not record.get("managed") or record.get("package_state")=="Not installed":
+            messagebox.showinfo(f"{label} is not installed",f"Install the {label} Server first, then configure access.")
             return
         if record.get("active")!="active":
-            messagebox.showinfo("MySQL is not running","Start MySQL Server before configuring an account.")
+            messagebox.showinfo(f"{label} is not running",f"Start the {label} Server before configuring access.")
             return
-        if not shutil.which("pkexec") or not shutil.which("mysql"):
-            messagebox.showerror("Required tools missing","DevPilot needs pkexec and the MySQL command-line client.")
+        binaries={"mysql":("mysql",),"mariadb":("mariadb","mysql"),"postgresql":("psql",),"redis":("redis-cli",)}
+        executable=next((shutil.which(name) for name in binaries[server_id] if shutil.which(name)),None)
+        if not shutil.which("pkexec") or not executable:
+            messagebox.showerror("Required tools missing",f"DevPilot needs pkexec and a client executable ({', '.join(binaries[server_id])}).")
             return
+
         dialog=tk.Toplevel(self)
-        dialog.title("Configure MySQL Access")
+        dialog.title(f"Configure {label} Access")
         dialog.transient(self);dialog.grab_set();dialog.resizable(False,False)
         body=ttk.Frame(dialog,padding=16);body.pack(fill="both",expand=True)
-        ttk.Label(body,text="Create a MySQL account for Beekeeper Studio",font=("Sans",12,"bold")).grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,6))
-        ttk.Label(body,text="Uses system root socket authentication through pkexec. DevPilot will not display, change, or reset the MySQL root password.",wraplength=480,foreground="#555").grid(row=1,column=0,columnspan=2,sticky="w",pady=(0,12))
-        ttk.Label(body,text="MySQL username").grid(row=2,column=0,sticky="w",pady=4)
-        username=tk.StringVar(value="omar")
+        ttk.Label(body,text=f"Create a local {label} application account",font=("Sans",12,"bold")).grid(
+            row=0,column=0,columnspan=2,sticky="w",pady=(0,6)
+        )
+        descriptions={
+            "mysql":"Uses local root socket authentication. Grants access only to the selected database.",
+            "mariadb":"Uses local root socket authentication. Grants access only to the selected database.",
+            "postgresql":"Uses the local postgres system account. Grants access only to the selected database and public schema.",
+            "redis":"Uses local Redis ACL administration. Grants read/write application commands only for the selected key pattern.",
+        }
+        ttk.Label(body,text=descriptions[server_id],wraplength=490,foreground="#555").grid(
+            row=1,column=0,columnspan=2,sticky="w",pady=(0,12)
+        )
+        ttk.Label(body,text="Username").grid(row=2,column=0,sticky="w",pady=4)
+        username=tk.StringVar(value="devpilot_app")
         ttk.Entry(body,textvariable=username,width=34).grid(row=2,column=1,sticky="ew",pady=4)
         ttk.Label(body,text="Password (12–128 characters)").grid(row=3,column=0,sticky="w",pady=4)
         password=tk.StringVar()
@@ -444,65 +525,84 @@ class App(tk.Tk):
         ttk.Label(body,text="Confirm password").grid(row=4,column=0,sticky="w",pady=4)
         confirm=tk.StringVar()
         ttk.Entry(body,textvariable=confirm,show="•",width=34).grid(row=4,column=1,sticky="ew",pady=4)
-        ttk.Label(body,text="Privilege level").grid(row=5,column=0,sticky="w",pady=4)
-        privilege=tk.StringVar(value="database")
-        choice=ttk.Combobox(body,textvariable=privilege,state="readonly",values=("database","admin"),width=31)
-        choice.grid(row=5,column=1,sticky="ew",pady=4)
-        ttk.Label(body,text="Database name (database mode)").grid(row=6,column=0,sticky="w",pady=4)
-        database=tk.StringVar(value="dev_database")
-        db_entry=ttk.Entry(body,textvariable=database,width=34)
-        db_entry.grid(row=6,column=1,sticky="ew",pady=4)
-        note=tk.StringVar(value="Least privilege: access is limited to one database.")
-        ttk.Label(body,textvariable=note,wraplength=480,foreground="#555").grid(row=7,column=0,columnspan=2,sticky="w",pady=(8,4))
-        def update_privilege(*_):
-            scoped=privilege.get()=="database"
-            db_entry.configure(state="normal" if scoped else "disabled")
-            note.set("Least privilege: access is limited to one database." if scoped else "Powerful local admin: can administer all databases and create other MySQL users. Use only on this development machine.")
-        choice.bind("<<ComboboxSelected>>",update_privilege)
+        scope=tk.StringVar(value="app_db" if server_id!="redis" else "app:*")
+        if server_id=="redis":
+            ttk.Label(body,text="Allowed key pattern").grid(row=5,column=0,sticky="w",pady=4)
+            ttk.Entry(body,textvariable=scope,width=34).grid(row=5,column=1,sticky="ew",pady=4)
+            scope_note="Redis ACLs are command/key based; they do not isolate logical Redis databases."
+        else:
+            ttk.Label(body,text="Existing database name").grid(row=5,column=0,sticky="w",pady=4)
+            ttk.Entry(body,textvariable=scope,width=34).grid(row=5,column=1,sticky="ew",pady=4)
+            scope_note="The database must already exist. DevPilot will not create, drop, or migrate databases."
+        ttk.Label(body,text=scope_note,wraplength=490,foreground="#555").grid(
+            row=6,column=0,columnspan=2,sticky="w",pady=(8,4)
+        )
         body.columnconfigure(1,weight=1)
-        buttons=ttk.Frame(body);buttons.grid(row=8,column=0,columnspan=2,sticky="e",pady=(14,0))
+        buttons=ttk.Frame(body);buttons.grid(row=7,column=0,columnspan=2,sticky="e",pady=(14,0))
         ttk.Button(buttons,text="Cancel",command=dialog.destroy).pack(side="right",padx=(6,0))
+
         def submit():
-            user=username.get().strip();secret=password.get()
+            user=username.get().strip()
+            secret=password.get()
             if secret!=confirm.get():
                 messagebox.showerror("Password mismatch","The passwords do not match.",parent=dialog);return
             try:
-                sql=build_mysql_user_sql(user,secret,privilege.get(),database.get().strip())
+                if server_id in ("mysql","mariadb"):
+                    payload=build_mysql_user_sql(user,secret,"database",scope.get().strip())
+                    access_scope=f"database '{scope.get().strip()}' only"
+                elif server_id=="postgresql":
+                    payload=build_postgresql_user_sql(user,secret,scope.get().strip())
+                    access_scope=f"database '{scope.get().strip()}' and its public schema"
+                else:
+                    payload=build_redis_acl_command(user,secret,scope.get().strip())
+                    access_scope=f"Redis keys matching '{scope.get().strip()}' and application read/write commands"
             except ValueError as exc:
                 messagebox.showerror("Invalid account details",str(exc),parent=dialog);return
-            scope=("all local databases and user management" if privilege.get()=="admin" else f"database '{database.get().strip()}' only")
-            if not messagebox.askyesno("Confirm MySQL account",f"Create '{user}'@'127.0.0.1' with access to {scope}?\n\nExisting accounts are never overwritten. DevPilot will not save the password.",parent=dialog):
-                return
+            if not messagebox.askyesno(
+                f"Confirm {label} account",
+                f"Create '{user}' with access to {access_scope}?\n\nExisting accounts are never overwritten. DevPilot will not save the password.",
+                parent=dialog
+            ):return
             dialog.destroy()
-            self.db_access_btn.configure(state="disabled")
-            self.db_status_label.config(text="Waiting for administrator authorization…")
+            for button in self.db_access_buttons.values():button.configure(state="disabled")
+            self.db_status_label.config(text=f"Waiting for administrator authorization ({label})…")
             self.db_progress.start(12)
             def worker():
                 try:
-                    command=["pkexec",shutil.which("mysql"),"--protocol=socket","-u","root","--batch","--skip-column-names"]
-                    result=subprocess.run(command,input=sql,capture_output=True,text=True,timeout=60,check=False)
+                    if server_id in ("mysql","mariadb"):
+                        command=["pkexec",executable,"--protocol=socket","-u","root","--batch","--skip-column-names"]
+                    elif server_id=="postgresql":
+                        command=["pkexec","--user","postgres",executable,"--no-psqlrc","--set","ON_ERROR_STOP=1","--dbname","postgres"]
+                    else:
+                        command=["pkexec",executable,"--pipe"]
+                    result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
                     code=result.returncode
                     detail=(result.stderr or result.stdout or "").strip()
                 except (OSError,subprocess.TimeoutExpired) as exc:
                     code=1;detail=str(exc)
-                self.after(0,self._mysql_access_done,user,code,detail)
+                self.after(0,self._database_access_done,server_id,label,user,code,detail)
             threading.Thread(target=worker,daemon=True).start()
         ttk.Button(buttons,text="Create account",command=submit).pack(side="right")
         dialog.bind("<Escape>",lambda _event:dialog.destroy())
         dialog.wait_window()
 
-    def _mysql_access_done(self,username,code,detail):
+    def _database_access_done(self,server_id,label,username,code,detail):
         self.db_progress.stop()
-        self.db_access_btn.configure(state="normal")
+        self._db_selection_changed()
         if code==0:
-            self.db_status_label.config(text=f"MySQL account '{username}' created successfully.")
-            messagebox.showinfo("MySQL access configured",f"Account '{username}'@'127.0.0.1' is ready.\n\nBeekeeper Studio connection:\nHost: 127.0.0.1\nPort: 3306\nUsername: {username}\nPassword: the password you entered\n\nDevPilot did not save the password.")
+            self.db_status_label.config(text=f"{label} account '{username}' created successfully.")
+            messagebox.showinfo(
+                f"{label} access configured",
+                f"Account '{username}' was created successfully.\n\n"
+                "Use the server's local host and port in your database client.\n"
+                "DevPilot did not save the password."
+            )
         else:
-            self.db_status_label.config(text="MySQL account creation failed or was cancelled.")
-            safe_detail=detail[-1800:] if detail else "Administrator authorization was cancelled or MySQL returned an error."
-            if "already exists" in safe_detail.lower():
-                safe_detail += "\n\nThe existing account was left unchanged. Choose another username."
-            messagebox.showerror("Could not configure MySQL access",safe_detail)
+            self.db_status_label.config(text=f"{label} account creation failed or was cancelled.")
+            safe_detail=detail[-1800:] if detail else "Administrator authorization was cancelled or the server returned an error."
+            if "already exists" in safe_detail.lower() or "duplicate" in safe_detail.lower():
+                safe_detail+="\n\nThe existing account was left unchanged."
+            messagebox.showerror(f"Could not configure {label} access",safe_detail)
 
     def _ws_ui(self):
         r=ttk.Frame(self.ws);r.pack(fill="x")
@@ -762,6 +862,14 @@ class App(tk.Tk):
         self.db_install_btn.config(state="normal" if available else "disabled")
         for button in self.db_service_buttons:
             button.config(state="normal" if can_manage else "disabled")
+        selected_id=selected[0] if selected else None
+        for server_id,button in self.db_access_buttons.items():
+            enabled=bool(
+                selected_id==server_id and record and record.get("managed")
+                and record.get("package_state")!="Not installed"
+                and record.get("active")=="active" and not self.db_busy
+            )
+            button.config(state="normal" if enabled else "disabled")
 
     def _selected_database_server(self):
         selected=self.db_tree.selection()
