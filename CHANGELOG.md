@@ -1,3 +1,9 @@
+## 0.3.4-preview
+
+- Add MySQL account setup for local GUI database clients.
+- Use privileged socket authentication without changing root credentials or saving passwords.
+- Default to one-database privileges; make local-admin privileges an explicit choice.
+
 # Changelog
 
 All notable DevPilot preview releases are documented here.
