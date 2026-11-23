@@ -7,7 +7,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-APP_VERSION="0.3.3-preview"
+APP_VERSION="0.3.4-preview"
 HOME=Path.home()
 APP_DIR=HOME/".config/linux-work-setup"
 CONFIG_FILE=APP_DIR/"config.json"
@@ -179,6 +179,37 @@ def parse_unmanaged_database_processes(ps_output):
             "socket":option_value("--socket"),
         })
     return found
+
+
+def mysql_sql_literal(value):
+    """Encode a printable value as a MySQL string literal."""
+    value=str(value)
+    if any(ord(ch)<32 or ord(ch)==127 for ch in value):
+        raise ValueError("Control characters are not allowed.")
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def build_mysql_user_sql(username, password, privilege_mode, database=""):
+    """Build SQL for a new local TCP account; never alter an existing account."""
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", username or ""):
+        raise ValueError("Username must contain 1–32 letters, digits, or underscores.")
+    if len(password) < 12 or len(password) > 128:
+        raise ValueError("Password must be between 12 and 128 characters.")
+    if privilege_mode == "admin":
+        grant = "GRANT ALL PRIVILEGES ON *.* TO {account} WITH GRANT OPTION;\\nGRANT CREATE USER ON *.* TO {account} WITH GRANT OPTION;"
+    elif privilege_mode == "database":
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", database or ""):
+            raise ValueError("Database name must contain 1–64 letters, digits, or underscores.")
+        grant = f"GRANT ALL PRIVILEGES ON \`{database}\`.* TO {{account}};"
+    else:
+        raise ValueError("Choose a supported privilege level.")
+    account = mysql_sql_literal(username) + "@'127.0.0.1'"
+    return (
+        f"CREATE USER {account} IDENTIFIED BY {mysql_sql_literal(password)};\\n"
+        + grant.format(account=account)
+        + "\\nFLUSH PRIVILEGES;\\n"
+    )
+
 
 def github_cli_auth_status(profile):
     """Return (label, detail) for the selected GitHub account without exposing credentials."""
