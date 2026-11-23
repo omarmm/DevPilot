@@ -4,7 +4,7 @@
 
 DevPilot is a lightweight desktop utility for setting up and managing a Linux developer workstation. It brings development package management, project workspaces, multiple Git identities, SSH key profiles, safe configuration backups, and terminal AI coding agents into one guided interface.
 
-> **Current status:** Early development / preview (`0.3.4-preview`). Features and configuration behavior may change.
+> **Current status:** Early development / preview (`0.3.5-preview`). Features and configuration behavior may change.
 
 ## Features
 
@@ -29,12 +29,14 @@ The dedicated **Database Servers** tab manages common local server packages and 
 - Detects manually launched database processes that do not have an APT/systemd service entry, and displays their PID, port, data directory, and socket when available.
 - Treats unmanaged processes as read-only. DevPilot does not stop, restart, import, move, or delete their data.
 - Checks for known default-port conflicts before installing or starting another server. MySQL and MariaDB are treated as conflicting default-port alternatives.
-- Provides an optional MySQL access setup flow for local GUI clients such as Beekeeper Studio.
-- Defaults to privileges scoped to one database; global local-admin privileges require an explicit selection.
-- Uses system root socket authentication through pkexec and never saves the new account password.
+- Provides separate access-configuration actions for MySQL, MariaDB, PostgreSQL, and Redis. Only the action matching the selected, installed, running server is enabled.
+- MySQL and MariaDB accounts are restricted to one existing database by default.
+- PostgreSQL roles are granted CONNECT to one existing database and access to its public schema, tables, and sequences.
+- Redis users use ACL key patterns and read/write/connection/transaction command categories; logical Redis databases are not treated as isolated security boundaries.
+- Uses privileged local administration and passes credentials through standard input; DevPilot never saves the new account password.
 - Creates new accounts only; existing accounts are never overwritten.
 
-MySQL access setup: select the MySQL row and choose **Configure MySQL Access…**. Use database mode for an account limited to one database, or explicitly choose local-admin mode to administer all local databases and create users. The account accepts TCP connections from 127.0.0.1; use host 127.0.0.1 and port 3306 in Beekeeper Studio. Administrator authorization is required. DevPilot does not store the password. This initial flow supports MySQL only.
+Access setup: select a server row, then use its matching Configure Access button. The target SQL database must already exist; DevPilot does not create, drop, or migrate databases. Redis uses a key pattern (default app:*) instead of a database name. Administrator authorization is required. DevPilot does not store the password.
 
 **Important:** Installing a system database server is different from installing a database client. The **Development Setup** tab still provides client tools for connecting to servers. Installing a server may create a system-managed data directory and start a service; back up existing databases before changing server packages or migrating data. A manually launched server using a temporary data directory remains temporary until you deliberately migrate it to a persistent setup.
 
