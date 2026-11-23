@@ -26,10 +26,12 @@ class DatabaseServerTests(unittest.TestCase):
         namespace = {"Path": Path, "shlex": shlex}
         exec(compile(ast.Module(body=[parser], type_ignores=[]), str(SOURCE), "exec"), namespace)
         helpers = [node for node in module.body if isinstance(node, ast.FunctionDef)
-                   and node.name in {"mysql_sql_literal", "build_mysql_user_sql"}]
+                   and node.name in {"mysql_sql_literal", "build_mysql_user_sql", "_validate_access_credentials", "_sql_string_literal", "build_postgresql_user_sql", "build_redis_acl_command"}]
         helper_namespace = {"re": re}
         exec(compile(ast.Module(body=helpers, type_ignores=[]), str(SOURCE), "exec"), helper_namespace)
         cls.build_mysql_user_sql = staticmethod(helper_namespace["build_mysql_user_sql"])
+        cls.build_postgresql_user_sql = staticmethod(helper_namespace["build_postgresql_user_sql"])
+        cls.build_redis_acl_command = staticmethod(helper_namespace["build_redis_acl_command"])
         cls.parse_processes = staticmethod(namespace["parse_unmanaged_database_processes"])
 
     def test_mysql_user_sql_is_scoped_to_database_by_default_mode(self):
@@ -51,6 +53,35 @@ class DatabaseServerTests(unittest.TestCase):
         sql = self.build_mysql_user_sql('omar', "pass'word\\123456", 'admin')
         self.assertIn("pass\\'word\\\\123456", sql)
 
+    def test_postgresql_user_sql_is_scoped_to_existing_database(self):
+        sql = self.build_postgresql_user_sql("app_user", "strong-password-123", "app_db")
+        self.assertIn('CREATE ROLE "app_user" WITH LOGIN', sql)
+        self.assertIn('GRANT CONNECT ON DATABASE "app_db"', sql)
+        self.assertIn("GRANT USAGE, CREATE ON SCHEMA public", sql)
+        self.assertIn("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public", sql)
+        self.assertNotIn("SUPERUSER", sql.upper())
+        self.assertNotIn("CREATEDB", sql.upper())
+
+    def test_postgresql_user_sql_rejects_invalid_identifiers(self):
+        with self.assertRaises(ValueError):
+            self.build_postgresql_user_sql("bad;role", "strong-password-123", "app_db")
+        with self.assertRaises(ValueError):
+            self.build_postgresql_user_sql("app_user", "short", "bad-db")
+
+    def test_redis_acl_is_limited_to_key_pattern_and_app_commands(self):
+        payload = self.build_redis_acl_command("app_user", "strong-password-123", "app:*")
+        self.assertIn("ACL", payload)
+        self.assertIn("~app:*", payload)
+        self.assertIn("+@read", payload)
+        self.assertIn("+@write", payload)
+        self.assertNotIn("+@admin", payload)
+        self.assertNotIn("allcommands", payload.lower())
+
+    def test_redis_acl_rejects_invalid_patterns(self):
+        with self.assertRaises(ValueError):
+            self.build_redis_acl_command("app_user", "strong-password-123", "*")
+        with self.assertRaises(ValueError):
+            self.build_redis_acl_command("app_user", "strong-password-123", "app:*;ACL")
     def test_supported_servers_and_packages_are_unique(self):
         self.assertEqual(
             {server["id"] for server in self.servers},
