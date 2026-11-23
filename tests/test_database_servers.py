@@ -1,5 +1,6 @@
 import ast
 import shlex
+import re
 import unittest
 from pathlib import Path
 
@@ -24,7 +25,31 @@ class DatabaseServerTests(unittest.TestCase):
         )
         namespace = {"Path": Path, "shlex": shlex}
         exec(compile(ast.Module(body=[parser], type_ignores=[]), str(SOURCE), "exec"), namespace)
+        helpers = [node for node in module.body if isinstance(node, ast.FunctionDef)
+                   and node.name in {"mysql_sql_literal", "build_mysql_user_sql"}]
+        helper_namespace = {"re": re}
+        exec(compile(ast.Module(body=helpers, type_ignores=[]), str(SOURCE), "exec"), helper_namespace)
+        cls.build_mysql_user_sql = staticmethod(helper_namespace["build_mysql_user_sql"])
         cls.parse_processes = staticmethod(namespace["parse_unmanaged_database_processes"])
+
+    def test_mysql_user_sql_is_scoped_to_database_by_default_mode(self):
+        sql = self.build_mysql_user_sql('omar_dev', 'a-strong-password-123', 'database', 'sandbox')
+        self.assertIn("CREATE USER 'omar_dev'@'127.0.0.1'", sql)
+        self.assertIn('GRANT ALL PRIVILEGES ON `sandbox`.*', sql)
+        self.assertNotIn('ON *.*', sql)
+
+    def test_mysql_admin_mode_is_explicit_and_can_manage_users(self):
+        sql = self.build_mysql_user_sql('omar_admin', 'a-strong-password-123', 'admin')
+        self.assertIn('GRANT ALL PRIVILEGES ON *.*', sql)
+        self.assertIn('GRANT CREATE USER ON *.*', sql)
+
+    def test_mysql_account_input_is_validated_and_password_is_escaped(self):
+        with self.assertRaises(ValueError):
+            self.build_mysql_user_sql("bad'user", 'a-strong-password-123', 'admin')
+        with self.assertRaises(ValueError):
+            self.build_mysql_user_sql('omar', 'short', 'admin')
+        sql = self.build_mysql_user_sql('omar', "pass'word\\123456", 'admin')
+        self.assertIn("pass\\'word\\\\123456", sql)
 
     def test_supported_servers_and_packages_are_unique(self):
         self.assertEqual(
