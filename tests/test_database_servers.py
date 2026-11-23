@@ -26,12 +26,13 @@ class DatabaseServerTests(unittest.TestCase):
         namespace = {"Path": Path, "shlex": shlex}
         exec(compile(ast.Module(body=[parser], type_ignores=[]), str(SOURCE), "exec"), namespace)
         helpers = [node for node in module.body if isinstance(node, ast.FunctionDef)
-                   and node.name in {"mysql_sql_literal", "build_mysql_user_sql", "_validate_access_credentials", "_sql_string_literal", "build_postgresql_user_sql", "build_redis_acl_command"}]
+                   and node.name in {"mysql_sql_literal", "build_mysql_user_sql", "_validate_access_credentials", "_sql_string_literal", "build_postgresql_user_sql", "build_redis_acl_command", "redis_acl_user_exists"}]
         helper_namespace = {"re": re}
         exec(compile(ast.Module(body=helpers, type_ignores=[]), str(SOURCE), "exec"), helper_namespace)
         cls.build_mysql_user_sql = staticmethod(helper_namespace["build_mysql_user_sql"])
         cls.build_postgresql_user_sql = staticmethod(helper_namespace["build_postgresql_user_sql"])
         cls.build_redis_acl_command = staticmethod(helper_namespace["build_redis_acl_command"])
+        cls.redis_acl_user_exists = staticmethod(helper_namespace["redis_acl_user_exists"])
         cls.parse_processes = staticmethod(namespace["parse_unmanaged_database_processes"])
 
     def test_mysql_user_sql_is_scoped_to_database_by_default_mode(self):
@@ -82,6 +83,13 @@ class DatabaseServerTests(unittest.TestCase):
             self.build_redis_acl_command("app_user", "strong-password-123", "*")
         with self.assertRaises(ValueError):
             self.build_redis_acl_command("app_user", "strong-password-123", "app:*;ACL")
+
+    def test_redis_existing_user_detection_matches_exact_username(self):
+        acl_list = "user default on nopass ~* &* +@all\\nuser app_user on ~app:* +@read"
+        self.assertTrue(self.redis_acl_user_exists(acl_list, "app_user"))
+        self.assertFalse(self.redis_acl_user_exists(acl_list, "app"))
+        self.assertFalse(self.redis_acl_user_exists(acl_list, "other"))
+
     def test_supported_servers_and_packages_are_unique(self):
         self.assertEqual(
             {server["id"] for server in self.servers},
