@@ -236,12 +236,9 @@ def build_postgresql_user_sql(username,password,database):
     return (
         f"CREATE ROLE {role} WITH LOGIN PASSWORD {_sql_string_literal(password)};\n"
         f"GRANT CONNECT ON DATABASE {db} TO {role};\n"
-        f"\\connect {database}\n"
         f"GRANT USAGE, CREATE ON SCHEMA public TO {role};\n"
         f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {role};\n"
         f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {role};\n"
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {role};\n"
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {role};\n"
     )
 
 
