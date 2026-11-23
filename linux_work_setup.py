@@ -405,6 +405,8 @@ class App(tk.Tk):
         self.db_enable_btn.pack(side="left",padx=(7,0))
         self.db_disable_btn=ttk.Button(actions,text="Disable at boot",command=lambda:self.database_service_action("disable"))
         self.db_disable_btn.pack(side="left",padx=(7,0))
+        self.db_access_btn=ttk.Button(actions,text="Configure MySQL Access…",command=self.configure_mysql_access)
+        self.db_access_btn.pack(side="left",padx=(7,0))
         self.db_service_buttons=[self.db_start_btn,self.db_stop_btn,self.db_restart_btn,self.db_enable_btn,self.db_disable_btn]
         self.db_progress=ttk.Progressbar(self.db,mode="indeterminate")
         self.db_progress.pack(fill="x",pady=(8,3))
@@ -414,6 +416,93 @@ class App(tk.Tk):
         self.db_log.pack(fill="x",pady=(5,0))
         self.db_tree.bind("<<TreeviewSelect>>",self._db_selection_changed)
         self._db_selection_changed()
+
+
+    def configure_mysql_access(self):
+        record=self.db_rows.get("mysql")
+        if not record or record.get("package_state")=="Not installed":
+            messagebox.showinfo("MySQL is not installed","Install MySQL Server first, then configure database access.")
+            return
+        if record.get("active")!="active":
+            messagebox.showinfo("MySQL is not running","Start MySQL Server before configuring an account.")
+            return
+        if not shutil.which("pkexec") or not shutil.which("mysql"):
+            messagebox.showerror("Required tools missing","DevPilot needs pkexec and the MySQL command-line client.")
+            return
+        dialog=tk.Toplevel(self)
+        dialog.title("Configure MySQL Access")
+        dialog.transient(self);dialog.grab_set();dialog.resizable(False,False)
+        body=ttk.Frame(dialog,padding=16);body.pack(fill="both",expand=True)
+        ttk.Label(body,text="Create a MySQL account for Beekeeper Studio",font=("Sans",12,"bold")).grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,6))
+        ttk.Label(body,text="Uses system root socket authentication through pkexec. DevPilot will not display, change, or reset the MySQL root password.",wraplength=480,foreground="#555").grid(row=1,column=0,columnspan=2,sticky="w",pady=(0,12))
+        ttk.Label(body,text="MySQL username").grid(row=2,column=0,sticky="w",pady=4)
+        username=tk.StringVar(value="omar")
+        ttk.Entry(body,textvariable=username,width=34).grid(row=2,column=1,sticky="ew",pady=4)
+        ttk.Label(body,text="Password (12–128 characters)").grid(row=3,column=0,sticky="w",pady=4)
+        password=tk.StringVar()
+        ttk.Entry(body,textvariable=password,show="•",width=34).grid(row=3,column=1,sticky="ew",pady=4)
+        ttk.Label(body,text="Confirm password").grid(row=4,column=0,sticky="w",pady=4)
+        confirm=tk.StringVar()
+        ttk.Entry(body,textvariable=confirm,show="•",width=34).grid(row=4,column=1,sticky="ew",pady=4)
+        ttk.Label(body,text="Privilege level").grid(row=5,column=0,sticky="w",pady=4)
+        privilege=tk.StringVar(value="database")
+        choice=ttk.Combobox(body,textvariable=privilege,state="readonly",values=("database","admin"),width=31)
+        choice.grid(row=5,column=1,sticky="ew",pady=4)
+        ttk.Label(body,text="Database name (database mode)").grid(row=6,column=0,sticky="w",pady=4)
+        database=tk.StringVar(value="dev_database")
+        db_entry=ttk.Entry(body,textvariable=database,width=34)
+        db_entry.grid(row=6,column=1,sticky="ew",pady=4)
+        note=tk.StringVar(value="Least privilege: access is limited to one database.")
+        ttk.Label(body,textvariable=note,wraplength=480,foreground="#555").grid(row=7,column=0,columnspan=2,sticky="w",pady=(8,4))
+        def update_privilege(*_):
+            scoped=privilege.get()=="database"
+            db_entry.configure(state="normal" if scoped else "disabled")
+            note.set("Least privilege: access is limited to one database." if scoped else "Powerful local admin: can administer all databases and create other MySQL users. Use only on this development machine.")
+        choice.bind("<<ComboboxSelected>>",update_privilege)
+        body.columnconfigure(1,weight=1)
+        buttons=ttk.Frame(body);buttons.grid(row=8,column=0,columnspan=2,sticky="e",pady=(14,0))
+        ttk.Button(buttons,text="Cancel",command=dialog.destroy).pack(side="right",padx=(6,0))
+        def submit():
+            user=username.get().strip();secret=password.get()
+            if secret!=confirm.get():
+                messagebox.showerror("Password mismatch","The passwords do not match.",parent=dialog);return
+            try:
+                sql=build_mysql_user_sql(user,secret,privilege.get(),database.get().strip())
+            except ValueError as exc:
+                messagebox.showerror("Invalid account details",str(exc),parent=dialog);return
+            scope=("all local databases and user management" if privilege.get()=="admin" else f"database '{database.get().strip()}' only")
+            if not messagebox.askyesno("Confirm MySQL account",f"Create '{user}'@'127.0.0.1' with access to {scope}?\\n\\nExisting accounts are never overwritten. DevPilot will not save the password.",parent=dialog):
+                return
+            dialog.destroy()
+            self.db_access_btn.configure(state="disabled")
+            self.db_status_label.config(text="Waiting for administrator authorization…")
+            self.db_progress.start(12)
+            def worker():
+                try:
+                    command=["pkexec",shutil.which("mysql"),"--protocol=socket","-u","root","--batch","--skip-column-names"]
+                    result=subprocess.run(command,input=sql,capture_output=True,text=True,timeout=60,check=False)
+                    code=result.returncode
+                    detail=(result.stderr or result.stdout or "").strip()
+                except (OSError,subprocess.TimeoutExpired) as exc:
+                    code=1;detail=str(exc)
+                self.after(0,self._mysql_access_done,user,code,detail)
+            threading.Thread(target=worker,daemon=True).start()
+        ttk.Button(buttons,text="Create account",command=submit).pack(side="right")
+        dialog.bind("<Escape>",lambda _event:dialog.destroy())
+        dialog.wait_window()
+
+    def _mysql_access_done(self,username,code,detail):
+        self.db_progress.stop()
+        self.db_access_btn.configure(state="normal")
+        if code==0:
+            self.db_status_label.config(text=f"MySQL account '{username}' created successfully.")
+            messagebox.showinfo("MySQL access configured",f"Account '{username}'@'127.0.0.1' is ready.\\n\\nBeekeeper Studio connection:\\nHost: 127.0.0.1\\nPort: 3306\\nUsername: {username}\\nPassword: the password you entered\\n\\nDevPilot did not save the password.")
+        else:
+            self.db_status_label.config(text="MySQL account creation failed or was cancelled.")
+            safe_detail=detail[-1800:] if detail else "Administrator authorization was cancelled or MySQL returned an error."
+            if "already exists" in safe_detail.lower():
+                safe_detail += "\\n\\nThe existing account was left unchanged. Choose another username."
+            messagebox.showerror("Could not configure MySQL access",safe_detail)
 
     def _ws_ui(self):
         r=ttk.Frame(self.ws);r.pack(fill="x")
