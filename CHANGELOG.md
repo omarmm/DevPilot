@@ -1,3 +1,9 @@
+## 0.3.5-preview
+
+- Add dedicated access configuration buttons for MySQL, MariaDB, PostgreSQL, and Redis.
+- Scope SQL accounts to an existing database and Redis ACL users to an explicit key pattern.
+- Enable only the access action for the selected, installed, running server.
+
 ## 0.3.4-preview
 
 - Add MySQL account setup for local GUI database clients.
