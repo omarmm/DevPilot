@@ -85,7 +85,7 @@ class DatabaseServerTests(unittest.TestCase):
             self.build_redis_acl_command("app_user", "strong-password-123", "app:*;ACL")
 
     def test_redis_existing_user_detection_matches_exact_username(self):
-        acl_list = "user default on nopass ~* &* +@all\\nuser app_user on ~app:* +@read"
+        acl_list = "user default on nopass ~* &* +@all\nuser app_user on ~app:* +@read"
         self.assertTrue(self.redis_acl_user_exists(acl_list, "app_user"))
         self.assertFalse(self.redis_acl_user_exists(acl_list, "app"))
         self.assertFalse(self.redis_acl_user_exists(acl_list, "other"))
