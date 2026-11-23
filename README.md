@@ -175,7 +175,7 @@ Private SSH keys are not included in DevPilot backups. Keep your own secure back
 - [x] Timestamped backups before managed configuration changes
 - [x] AI Agents tab for install/update, status detection, and terminal launch
 - [x] Database Servers tab for APT installation, systemd lifecycle, and unmanaged process detection
-- [x] MySQL local account setup for GUI clients with scoped and explicit local-admin modes
+- [x] Per-server database access setup for MySQL, MariaDB, PostgreSQL, and Redis
 - [ ] Secure per-account HTTPS credential integration
 - [ ] Bash and Zsh workspace prompt integration
 - [ ] Workspace move/rename with collision preview
