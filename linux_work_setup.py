@@ -7,7 +7,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-APP_VERSION="0.3.4-preview"
+APP_VERSION="0.3.5-preview"
 HOME=Path.home()
 APP_DIR=HOME/".config/linux-work-setup"
 CONFIG_FILE=APP_DIR/"config.json"
@@ -248,8 +248,9 @@ def build_postgresql_user_sql(username,password,database):
 def build_redis_acl_command(username,password,key_pattern):
     """Build a RESP command for a non-admin Redis application ACL user."""
     _validate_access_credentials(username,password)
-    if not re.fullmatch(r"[A-Za-z0-9:_*.-]{1,128}",key_pattern or ""):
-        raise ValueError("Key pattern may contain only letters, digits, colon, underscore, dot, hyphen, and *.")
+    if (not re.fullmatch(r"[A-Za-z0-9:_*.-]{1,128}",key_pattern or "")
+            or key_pattern.startswith("*") or key_pattern=="*"):
+        raise ValueError("Key pattern must start with a literal prefix and may contain letters, digits, colon, underscore, dot, hyphen, and *.")
     args=["ACL","SETUSER",username,"reset","on",">"+password,"~"+key_pattern,
           "+@read","+@write","+@connection","+@transaction"]
     chunks=[f"*{len(args)}\r\n"]
@@ -572,7 +573,7 @@ class App(tk.Tk):
                     if server_id in ("mysql","mariadb"):
                         command=["pkexec",executable,"--protocol=socket","-u","root","--batch","--skip-column-names"]
                     elif server_id=="postgresql":
-                        command=["pkexec","--user","postgres",executable,"--no-psqlrc","--set","ON_ERROR_STOP=1","--dbname","postgres"]
+                        command=["pkexec","--user","postgres",executable,"--no-psqlrc","--set","ON_ERROR_STOP=1","--dbname",scope.get().strip()]
                     else:
                         command=["pkexec",executable,"--pipe"]
                     result=subprocess.run(command,input=payload,capture_output=True,text=True,timeout=60,check=False)
